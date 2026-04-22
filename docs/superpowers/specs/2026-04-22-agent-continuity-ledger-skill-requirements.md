@@ -1,540 +1,470 @@
-# Agent Continuity Ledger Skill - 需求说明
+# Agent Context Sync and Decision Memory Skill - 需求说明
 
 日期: 2026-04-22
 状态: 需求说明草案
-目标形态: Codex skill
-推荐 skill 名称: `agent-continuity-ledger`
+目标形态: 本地 Codex skill
+推荐 skill 名称: `agent-context-sync`
+历史名称: `agent-continuity-ledger`
 
 ## 1. 背景
 
-最初设想是做一个类似 Trello 的本地 AI 任务应用, 能从资料中自动拆解任务、整理优先级、定制日程并自动执行。经过评审后, 这个方向被认为过重, 且容易与现有任务管理、日历、自动化和 AI agent 产品重叠。
+这个项目最初从“AI Trello / 自动任务拆解 / 日程规划 / 自动执行”开始讨论。经过多轮设计和反对意见检视后，我们认为完整任务管理应用在第一阶段风险过高，也容易与 Trello、Notion、Todoist、Linear、日历产品、Codex 自身任务拆解能力以及各类 agent 平台重叠。
 
-新的收敛方向是先做一个 skill, 不急着做完整应用。这个 skill 不把重点放在“AI 会拆任务”上, 因为 Codex、ChatGPT、Notion AI 等工具本身已经能做到任务拆分。它要解决的是更窄但更有差异化的问题:
+新的切入点更窄，也更贴近真实痛点:
 
-> 让 AI 在跨会话、跨任务的工作中不失忆, 并以可审查、可追溯的方式维护任务账本、执行顺序和日程投影。
+> 让多 session、多 subagent 的 AI 工作能够快速同步必要上下文，并持续记录关键决策、决策由来和后续影响。
 
-因此, 这个 skill 的核心不是自动执行, 也不是替代 Todoist、Trello、Notion、Google Calendar 或 Apple Reminders。它的核心是建立一个本地的 AI 工作连续性协议:
+用户观察到一个具体问题: Codex 开辟 subagent 时，子 agent 并不继承当前 session 的 memory，也常常需要重新读取当前目录文件来恢复上下文。这说明我们不应该把产品价值建立在“模型天然记得一切”上，而应该建立一个本地、显式、可审计、可被新 session 和 subagent 快速读取的上下文同步层。
 
-- 任务从哪里来。
-- 哪些任务被用户确认过。
-- 哪些任务只是 AI 推断。
-- 下一步行动是什么。
-- 为什么今天应该做这些任务。
-- 计划变化的依据是什么。
-- 哪些时间块可以导出到日历。
-
-补充观察:
-
-- Codex 当前不应被假定具有跨 session 的任务记忆。
-- 当新 session 被问到“你还记得这个项目做了什么、到哪一步了吗”时, 它通常只能重新读取仓库 README、文档、git log 和当前状态来推断进度。
-- 这说明 skill 的价值不在于让模型“自然记住”, 而在于把任务记忆显式写入固定文件, 让新 session 能先读取同一个账本再继续工作。
-- 因此, `.agent-ledger/task-ledger.md` 是跨 session 连续性的事实来源, 不是辅助说明。
+这也带来第二个需求: 不能只做临时 handoff。agent 还需要适当维护每次重要 decision 的由来、证据、相关记录和后续影响，方便用户和 agent 回顾“当时为什么这么设计”。
 
 ## 2. 产品定位
 
-`agent-continuity-ledger` 是一个 Codex skill, 用于维护本地任务连续性账本。
+`agent-context-sync` 是一个本地 Codex skill，用来维护项目内的 AI 工作上下文同步包和决策记忆。
 
 一句话定位:
 
-> 把用户与 AI 讨论出的工作事项编译为可审查的任务变更集、长期任务账本、每日/每周计划和可选日历投影。
+> 把 AI 工作中真正需要跨 session、跨 subagent 共享的信息，整理成 `.agent-context/` 下的 handoff、session log、decision records 和 subagent briefs。
 
 它不是:
 
-- 任务管理 SaaS。
-- 看板应用。
-- 双向日历同步工具。
-- 后台自动执行器。
-- 通用个人日程管理器。
-- 外部系统写入自动化工具。
+- 任务管理 SaaS
+- 看板应用
+- 自动日程应用
+- 后台 scheduler
+- 自动执行 agent 平台
+- 外部系统 connector
+- 通用个人长期记忆库
+- 替代 Codex/ChatGPT 自身推理能力的任务拆分器
 
 它是:
 
-- AI 工作交接协议。
-- 本地任务记忆账本。
-- 任务变更审阅流程。
-- 每日/每周计划生成器。
-- 已确认时间块的 `.ics` 导出器。
+- AI 工作交接协议
+- 多 session 上下文同步层
+- subagent briefing 工具
+- 设计决策记忆系统
+- 本地文件型 project memory
+- memo / memory 的清洁分流机制
 
-## 3. 目标用户和使用场景
+## 3. 核心问题
 
-### 3.1 目标用户
+第一版要解决的问题不是“AI 能不能拆任务”，而是:
 
-第一版目标用户是频繁使用 Codex 或类似 AI agent 进行项目推进、研究、写作、开发、运营或知识工作的个人用户。
+- 新 session 不知道上次讨论到哪里。
+- subagent 不继承当前 session 的 memory。
+- 子 agent 为了补上下文，反复扫描 README、docs、git log 和大量源码。
+- 重要设计决策散落在聊天记录里，后续很难知道当时为什么这么选。
+- 用户的长期 memo 不应该被项目内临时细节污染。
+- AI 常常把自己推断的内容和用户确认过的内容混在一起。
+- 多个 agent 的结论缺少一个统一的同步点。
 
-用户特征:
+## 4. 目标用户和使用场景
 
-- 经常和 AI 讨论任务、方案和执行顺序。
-- 任务来源分散在聊天、文档、代码、会议记录或临时想法中。
-- 不希望马上迁移到新的完整任务管理系统。
-- 希望 AI 能在下次会话中知道上次说到哪里。
-- 希望计划进入 Markdown 或日历, 但不希望 AI 擅自承诺时间。
+第一版目标用户是频繁使用 Codex 或类似 AI agent 推进项目的人，尤其是会在同一项目中反复开启 session、使用 subagent、讨论设计、修改 spec、做代码实现和 review 的个人用户。
 
-### 3.2 典型触发语句
+典型使用场景:
 
-Skill 应在类似请求中触发:
+- 用户问“这个项目上次做到哪里了”。
+- 用户让 AI “把刚才的讨论整理一下，方便下次继续”。
+- 用户做了一个产品或技术决策，希望记录“为什么这么决定”。
+- 用户准备派发 subagent，希望只给它必要上下文，而不是让它从零扫全仓库。
+- subagent 返回结果后，需要把关键结论并入主 session 的可审计记录。
+- 用户希望 memo 保持干净，只保存长期偏好和稳定事实，把项目上下文放回项目目录。
+- 用户需要回顾一个月前为什么放弃某个方案、接受某个折中。
 
-- “帮我记一下这些任务。”
-- “把刚才讨论的事情整理进任务账本。”
-- “根据任务账本安排一下今天。”
-- “生成本周计划。”
-- “看看哪些任务应该先做。”
-- “把确认过的计划导出成日历。”
-- “更新一下这个项目的下一步。”
-- “上次我们做到哪里了?”
-- “帮我维护一个跨会话的任务列表。”
-- “把这些新增需求变成可审查的任务变更。”
+典型触发语句:
 
-## 4. 核心目标
+- “更新一下上下文。”
+- “把今天的进展写到项目记忆里。”
+- “记录这个决策和原因。”
+- “生成一个 subagent brief。”
+- “下次 session 应该从哪里开始？”
+- “帮我整理 handoff。”
+- “这个决定以后怎么追溯？”
+- “不要污染 memo，把项目上下文写到本地文件。”
+- “让子 agent 少扫一点文件，给它一份上下文包。”
+
+## 5. V1 核心目标
 
 第一版必须达成:
 
-- 维护本地 `task-ledger.md` 作为任务账本源。
-- 新 session 能通过读取 `task-ledger.md` 回答“上次做到哪里了”。
-- 从用户输入中提取新增任务、任务更新、阻塞项和澄清问题。
-- 在修改账本前生成 `ChangeSet`, 让用户确认。
-- 区分用户确认内容和 AI 推断内容。
-- 为每个任务保留来源、下一步行动和验收标准。
-- 根据任务账本生成 `today-plan.md` 和 `weekly-plan.md`。
-- 只将用户确认过的时间块导出为 `.ics`。
-- 明确 `.ics` 只是日历投影, 不是任务真相源。
-- 不执行外部写入、命令运行、消息发送、删除文件等高风险动作。
+- 在当前 workspace 下维护 `.agent-context/` 目录。
+- 用 `handoff.md` 保存当前目标、当前状态、下一步、阻塞、活跃问题和优先读取文件。
+- 用 `session-log.md` 追加记录重要 session 摘要、subagent 结果和上下文变化。
+- 用 `decisions/` 保存 ADR-like decision records，记录 decision、原因、证据、备选方案、影响和复审触发条件。
+- 用 `briefs/` 保存 subagent briefs，降低子 agent 反复全量读取仓库的成本。
+- 区分用户确认内容、AI 推断内容、待确认内容。
+- 在写入上下文文件前生成 `SyncSet`，让用户确认要同步什么。
+- 引入 reviewer 规则，对 SyncSet 做自检，避免污染上下文、误记决策或泄露敏感信息。
+- 让新 session 能优先读取 `.agent-context/handoff.md` 和相关 decisions，而不是只靠 README/git 推断。
+- 让 subagent prompt 能引用 briefing 文件，保持上下文最小且任务聚焦。
 
-## 5. 非目标
+## 6. V1 非目标
 
 第一版不做:
 
-- 完整 app UI。
-- SQLite 数据库。
-- 看板拖拽。
-- 多用户协作。
-- 团队权限。
-- CalDAV。
-- Google / Microsoft / Apple OAuth。
-- 双向日历同步。
-- 后台 scheduler。
-- 自动提醒 daemon。
-- 自动执行任务。
-- 外部 SaaS 写入。
-- 自动创建 GitHub issue、Trello card、Notion task。
-- 复杂依赖图、甘特图或资源负载计算。
-- 自然语言 recurring task 解析。
-- `.ics` 订阅服务器或 `webcal://` feed。
-- 把未确认任务自动放入日历。
+- 任务看板 UI
+- 完整 task ledger
+- daily plan / weekly plan
+- `.ics` 日历导出
+- 后台定时任务
+- 自动提醒
+- 自动执行任务
+- 外部 SaaS 写入
+- 飞书、Notion、Trello、GitHub Issues connector
+- websearch / MCP connector
+- 云端同步
+- 多用户协作
+- 团队隔离
+- 权限系统
+- 长期个人 memory 管理
 
-这些能力可以作为后续版本考虑, 但不进入第一版。
+这些能力可以作为后续方向，但不进入第一版。V1 的成功标准是“上下文恢复和决策追溯是否明显变好”，不是“任务管理功能是否完整”。
 
-## 6. Skill 形态
+## 7. 记忆分层
 
-推荐目录结构:
+该 skill 必须明确区分四类记忆，避免把所有信息都塞进 memo 或单一文件。
+
+### 7.1 Platform memo / memory
+
+用途:
+
+- 长期稳定偏好
+- 跨项目通用习惯
+- 用户明确要求长期记住的信息
+
+不应写入:
+
+- 当前项目临时状态
+- 某次 session 的详细过程
+- subagent 临时结论
+- 尚未确认的设计判断
+- 大段代码上下文
+
+### 7.2 `.agent-context/handoff.md`
+
+用途:
+
+- 当前工作交接
+- 新 session 启动入口
+- 让 agent 快速知道“现在到哪一步”
+
+特点:
+
+- 短
+- 可覆盖更新
+- 应标注失效条件
+- 不保存完整历史
+
+### 7.3 `.agent-context/session-log.md`
+
+用途:
+
+- 追加记录重要 session 结果
+- 记录 subagent 返回摘要
+- 记录上下文同步发生过什么
+
+特点:
+
+- append-only 为主
+- 可以有 correction entry
+- 不追求记录所有聊天细节
+
+### 7.4 `.agent-context/decisions/*.md`
+
+用途:
+
+- 记录重要产品、技术、范围和流程决策
+- 解释当时为什么这样选
+- 保存被拒绝的备选方案
+- 给后续复审提供依据
+
+特点:
+
+- 每个重要 decision 单独成文
+- 可被 supersede，但不物理删除
+- 记录证据和后果
+
+### 7.5 `.agent-context/briefs/*.md`
+
+用途:
+
+- 给 subagent 的最小必要上下文包
+- 明确任务边界、读取文件、不要读取的内容、输出格式和相关 decisions
+
+特点:
+
+- 任务专用
+- 可过期
+- 不替代 handoff 和 decisions
+
+## 8. Workspace 文件契约
+
+默认目录:
 
 ```text
-agent-continuity-ledger/
-  SKILL.md
-  scripts/
-    export_ics.py
-    validate_ledger.py
-  references/
-    task-ledger-schema.md
-    changeset-protocol.md
-    planning-rules.md
-    calendar-export-rules.md
-  assets/
-    task-ledger-template.md
-    today-plan-template.md
-    weekly-plan-template.md
-  agents/
-    openai.yaml
+.agent-context/
+  handoff.md
+  session-log.md
+  decisions/
+    DEC-YYYY-MM-DD-NNN-short-title.md
+  briefs/
+    subagent-YYYY-MM-DD-NNN-topic.md
 ```
 
-第一版可以先实现:
-
-- `SKILL.md`
-- `references/task-ledger-schema.md`
-- `references/changeset-protocol.md`
-- `references/planning-rules.md`
-- `references/calendar-export-rules.md`
-- `assets/task-ledger-template.md`
-- `assets/today-plan-template.md`
-- `assets/weekly-plan-template.md`
-- `scripts/export_ics.py`
-
-`validate_ledger.py` 可以作为第二阶段实现。
-
-## 7. 工作区文件契约
-
-Skill 运行时应在当前项目或用户指定目录下维护一个任务工作区。默认建议:
+V1 默认只维护这些文件。若用户要求，也可以在后续版本增加:
 
 ```text
-.agent-ledger/
-  task-ledger.md
-  decision-log.md
-  plans/
-    today-plan.md
-    weekly-plan.md
-  calendar/
-    confirmed-timeblocks.ics
+.agent-context/
+  index.md
+  review-log.md
+  sources/
+  metrics.md
 ```
 
-跨 session 读取规则:
+但 V1 不应因为结构过重而降低使用频率。
 
-- 如果 `.agent-ledger/task-ledger.md` 存在, skill 必须优先读取它, 再读取 README、git log 或其他项目文件。
-- README、git log 和 docs 可用于补充上下文, 但不能覆盖账本中的用户确认状态。
-- 如果账本和仓库状态冲突, skill 应生成 ChangeSet 或澄清问题, 不应擅自重写账本。
-- 如果账本不存在, skill 应明确说明“没有发现任务账本, 只能基于仓库内容推断当前进度”, 并询问是否创建账本。
+## 9. `handoff.md` 需求
 
-### 7.1 `task-ledger.md`
+`handoff.md` 必须回答:
 
-任务账本源文件。它是任务状态的主要来源。
+- 当前目标是什么。
+- 当前状态是什么。
+- 下一步最应该做什么。
+- 有哪些阻塞。
+- 有哪些活跃问题。
+- 哪些 decisions 最相关。
+- 新 session 应优先读取哪些文件。
+- 哪些内容不需要重新打开。
+- 当前 handoff 什么时候会过期。
 
-必须包含:
+`handoff.md` 不应该:
 
-- 任务 ID。
-- 任务标题。
-- 状态。
-- 来源。
-- 用户确认状态。
-- 下一步行动。
-- 验收标准。
-- 优先级。
-- 风险等级。
-- 截止日期。
-- 预估耗时。
-- 阻塞项。
-- 最近更新时间。
+- 记录完整历史。
+- 复制所有 decision 内容。
+- 充当任务管理器。
+- 保存敏感 token、密钥、隐私数据。
+- 把 AI 推断写成用户已确认事实。
 
-推荐状态:
+## 10. `session-log.md` 需求
 
-- `inbox`: 已捕获, 未整理。
-- `ready`: 可执行。
-- `active`: 正在推进。
-- `waiting`: 等待外部输入或依赖。
-- `scheduled`: 已安排时间块。
-- `done`: 已完成。
-- `dropped`: 明确放弃。
+`session-log.md` 用于追加记录重要节点。每条记录应包含:
 
-### 7.2 `decision-log.md`
+- 时间
+- 本次目标
+- 发生了什么
+- 用户确认了什么
+- AI 推断了什么
+- subagent 输出了什么
+- 写入了哪些 context 文件
+- 后续动作
+- 需要复审的问题
 
-记录用户对 AI 建议的决策。
+日志应保持摘要级别，不要变成聊天全文转录。若记录错误，不直接重写历史，而是追加 correction。
+
+## 11. Decision record 需求
+
+每个重要 decision 都应单独保存为:
+
+```text
+.agent-context/decisions/DEC-YYYY-MM-DD-NNN-short-title.md
+```
 
 必须记录:
 
-- 时间。
-- 决策类型。
-- 涉及任务 ID。
-- AI 建议摘要。
-- 用户选择。
-- 修改说明。
+- decision 标题
+- status: `proposed` / `accepted` / `superseded` / `rejected`
+- date
+- confirmed by
+- context
+- decision
+- reasons
+- rejected alternatives
+- evidence
+- consequences
+- related files
+- related sessions
+- supersedes / superseded by
+- review triggers
 
-典型决策:
+需要记录 decision 的情况:
 
-- 接受新增任务。
-- 修改后接受。
-- 拒绝任务。
-- 推迟任务。
-- 标记完成。
-- 导出时间块到日历。
+- 产品定位变化
+- V1 范围变化
+- 技术架构选择
+- 放弃某个重要方案
+- 接受某个重要折中
+- 引入或移除核心文件契约
+- 对安全边界、隐私边界、自动化边界做出选择
 
-### 7.3 `today-plan.md`
+不需要记录 decision 的情况:
 
-当天计划输出。
+- 普通措辞修改
+- 临时 todo
+- 纯格式调整
+- 还没有形成明确选择的头脑风暴片段
 
-必须包含:
+## 12. Subagent brief 需求
 
-- 今日目标。
-- 已确认时间块。
-- 候选任务。
-- 不安排的任务及原因。
-- 阻塞项。
-- 需要用户确认的问题。
-- 计划生成假设。
+在准备派发 subagent 时，skill 应能生成 brief，帮助主 agent 把上下文压缩为“够用但不过载”的任务包。
 
-### 7.4 `weekly-plan.md`
+每份 brief 应包含:
 
-本周计划输出。
+- mission
+- role
+- required context
+- relevant decisions
+- files to read first
+- files not to read unless needed
+- constraints
+- expected output
+- non-goals
+- expiry / stale condition
 
-必须包含:
+brief 的目标不是让子 agent 完全继承主 agent 的记忆，而是让它少读无关文件、少误解当前设计、少重复已经被否定的方案。
 
-- 本周 1 到 3 个 outcomes。
-- 每日 focus。
-- 关键任务顺序。
-- 等待项。
-- 风险。
-- 被排除任务及原因。
+## 13. SyncSet 协议
 
-### 7.5 `confirmed-timeblocks.ics`
+`SyncSet` 是所有写入前的审查单。skill 不应直接修改 `.agent-context/`，而应先展示将要同步的内容。
 
-可选日历导出文件。
+SyncSet 应包含:
 
-只允许包含:
+- `proposed_handoff_updates`
+- `proposed_session_log_entries`
+- `proposed_decision_records`
+- `proposed_subagent_briefs`
+- `fields_requiring_user_confirmation`
+- `ai_inferred_items`
+- `sensitive_or_excluded_items`
+- `reviewer_findings`
 
-- 用户确认过的时间块。
-- 用户确认过的重要截止日期。
+用户确认方式:
 
-不允许包含:
+- “确认写入”
+- “按这个同步”
+- “接受这个 SyncSet”
+- “修改 X 后写入”
 
-- 未确认 backlog。
-- 阻塞任务。
-- AI 推断但用户未确认的任务。
-- 外部会议邀请。
-- 参会人。
-- RSVP。
-- 自动提醒, 除非用户明确要求。
+模糊回复不算确认，例如:
 
-## 8. ChangeSet 协议
+- “看起来可以”
+- “差不多”
+- “先这样吧”
 
-Skill 不应直接修改 `task-ledger.md`。任何账本变更前必须先生成 ChangeSet。
+除非用户已经明确授权当前步骤可以写入，否则 skill 应先等待确认。
 
-ChangeSet 应包含:
+## 14. Reviewer 需求
 
-- `proposed_additions`: 建议新增任务。
-- `proposed_updates`: 建议更新任务。
-- `proposed_status_changes`: 建议状态变化。
-- `proposed_schedule_blocks`: 建议时间块。
-- `clarification_questions`: 需要用户补充的问题。
-- `blocked_items`: 不应直接写入的项目。
-- `risk_notes`: 风险说明。
-
-每个 ChangeSet item 必须包含:
-
-- 建议动作。
-- 任务 ID 或新任务临时 ID。
-- 标题。
-- 描述。
-- 来源证据。
-- AI 推断字段。
-- 用户需要确认的字段。
-- 风险等级。
-- 接受后的写入位置。
-
-用户决策方式:
-
-- 全部接受。
-- 逐条接受。
-- 修改后接受。
-- 拒绝。
-- 稍后处理。
-
-只有用户确认后, Skill 才能使用 `apply_patch` 或等价安全编辑方式更新账本文件。
-
-## 9. Reviewer 规则
-
-Reviewer 在本 skill 中是规则化审查流程, 不一定是独立 agent。它的职责是帮助 AI 在输出 ChangeSet 前做自检。
+Reviewer 是规则化审查流程，不一定是独立 agent。它在展示 SyncSet 前运行，用来保护上下文质量。
 
 Reviewer 必须检查:
 
-- 任务是否有来源。
-- 来源是否足以支持任务。
-- 任务是否可执行。
-- 下一步行动是否明确。
-- 验收标准是否清楚。
-- 是否存在重复任务。
-- 是否缺少截止日期、范围或依赖。
-- 是否把 AI 推断误写成用户确认事实。
-- 是否包含高风险动作。
-- 是否不应进入日历。
+- 是否把 AI 推断写成用户确认事实。
+- 是否记录了没有来源的 decision。
+- 是否把临时噪音写进 handoff。
+- 是否把长期偏好误写入项目上下文。
+- 是否把项目临时状态误建议写进 memo。
+- 是否泄露 secrets、token、账号、个人隐私。
+- 是否创建了过大的 brief，导致 subagent 仍然需要读太多。
+- 是否遗漏了重要 rejected alternatives。
+- 是否存在与已有 decision 冲突但没有 supersede 关系的记录。
+- 是否让 V1 范围重新滑向 task manager / calendar / scheduler。
 
-Reviewer 输出建议:
+Reviewer 输出:
 
-- `accept_draft`: 可展示给用户确认。
-- `needs_user_input`: 需要用户补充信息。
-- `revise_once`: 需要 AI 重写一次。
-- `manual_only`: 只能作为人工处理项, 不进入自动计划或日历。
-- `blocked`: 不应写入账本。
+- `accept_draft`
+- `needs_user_input`
+- `revise_once`
+- `manual_only`
+- `blocked`
 
-## 10. 排序和计划规则
-
-排序必须透明, 不做黑盒优化。
-
-计划生成流程:
-
-1. 排除 `done`、`dropped` 和明显阻塞任务。
-2. 将 `waiting` 任务放入等待区, 不安排执行时间块。
-3. 优先处理有硬截止日期或外部承诺的任务。
-4. 优先处理能解锁多个后续任务的任务。
-5. 优先处理高影响且验收标准清楚的任务。
-6. 将高风险、低置信度、范围不清的任务降权。
-7. 对延期多次但仍重要的任务提高权重。
-8. 每日计划默认只占用用户可用时间的 60% 到 70%。
-9. 每天建议最多 3 个主要 focus。
-10. 每个时间块必须说明排序依据。
-
-计划输出必须解释:
-
-- 为什么这些任务被安排。
-- 为什么某些任务没有安排。
-- 哪些任务需要用户确认。
-- 哪些假设可能导致计划变化。
-
-## 11. Calendar 和 `.ics` 要求
-
-`.ics` 是可选输出, 不是核心账本。
-
-第一版只生成 `VEVENT`, 不生成 `VTODO`。
-
-原因:
-
-- 主流日历客户端对事件支持更一致。
-- 待办任务语义在不同客户端中差异较大。
-- 任务状态、来源、验收标准和依赖不适合依赖 `.ics` 表达。
-
-导出规则:
-
-- 只导出用户确认过的时间块。
-- 每个事件必须有稳定 `UID`。
-- 每个事件必须有 `DTSTAMP`。
-- 使用明确时区。
-- 全天截止日期使用全天 `VEVENT`。
-- `DESCRIPTION` 包含任务 ID、来源摘要、验收标准和风险提示。
-- 默认不生成提醒。
-- 不生成参会人、会议链接、RSVP 或外部邀请。
-- 重新导出时应尽量保持同一任务时间块的 `UID` 稳定, 避免重复导入。
-
-用户提示:
-
-- 导入 `.ics` 通常是快照, 不保证同步。
-- 订阅 URL 才更像持续更新, 但第一版不提供订阅服务。
-- 建议用户导入到单独 calendar, 方便删除和重建。
-- 日历显示不代表任务已完成。
-
-## 12. 脚本需求
-
-### 12.1 `export_ics.py`
-
-职责:
-
-- 从确认后的 plan/timeblocks 生成 `.ics`。
-- 保证基础 iCalendar 格式正确。
-- 使用稳定 UID。
-- 处理转义和 CRLF 换行。
-- 输出到 `.agent-ledger/calendar/confirmed-timeblocks.ics`。
-
-输入:
-
-- 结构化 timeblocks JSON 或 Markdown 中的确认时间块。
-
-输出:
-
-- `.ics` 文件。
-
-不负责:
-
-- 决定任务排序。
-- 读取用户日历空闲时间。
-- 连接 Google/Apple/Microsoft 日历。
-- 自动同步。
-
-### 12.2 `validate_ledger.py`
-
-第二阶段脚本。
-
-职责:
-
-- 检查 `task-ledger.md` 是否符合 schema。
-- 检查任务 ID 是否重复。
-- 检查状态值是否合法。
-- 检查必要字段是否缺失。
-- 检查计划中引用的任务 ID 是否存在。
-
-## 13. 安全和权限
-
-Skill 默认只操作当前工作区内 `.agent-ledger/` 目录。
-
-禁止:
-
-- 删除用户文件。
-- 覆盖外部文件。
-- 执行 shell 命令完成任务本身。
-- 发送消息。
-- 写入外部 SaaS。
-- 自动创建外部 issue/card/task。
-- 未经确认标记任务完成。
-- 未经确认导出 `.ics`。
+## 15. 安全和隐私边界
 
 允许:
 
-- 读取 `.agent-ledger/` 文件。
-- 创建 `.agent-ledger/` 模板文件。
-- 生成 ChangeSet。
-- 在用户确认后更新任务账本。
-- 在用户确认后生成 Markdown 计划。
-- 在用户确认后生成 `.ics`。
+- 读取当前 workspace 的 `.agent-context/`。
+- 读取用户明确要求或任务必要的项目文档。
+- 生成 SyncSet。
+- 在用户确认后创建或更新 `.agent-context/` 文件。
+- 在用户确认后生成 subagent brief。
 
-## 14. 成功指标
+禁止:
 
-第一版不以功能数量为成功标准, 而以连续使用和任务质量为标准。
+- 未确认写入上下文文件。
+- 写入平台 memo，除非用户明确要求长期记住。
+- 保存 secret、token、cookie、私钥、个人身份信息。
+- 删除历史 decision record。
+- 把 superseded decision 物理删除。
+- 自动写入外部系统。
+- 自动执行任务本身。
+- 自动创建日历、issue、Trello card 或飞书任务。
 
-两周 dogfood 指标:
+## 16. 成功指标
 
-- 至少连续使用 10 次。
-- AI 生成任务建议接受率达到 60% 以上。
-- 平均每条被接受任务的人工修改量低于 30%。
-- 用户能通过账本回答“上次做到哪里了”。
-- 新开 Codex session 后, 在不依赖聊天历史的情况下, 能从 `.agent-ledger/task-ledger.md` 恢复任务状态和下一步。
-- 用户认为计划解释足够清楚。
-- `.ics` 导出没有产生重复事件或明显时间错误。
-- 用户没有因为账本维护感到额外负担。
+两周 dogfood 成功标准:
 
-如果这些指标不成立, 不应继续扩展 app、scheduler 或外部连接器。
+- 新 session 能在 2 分钟内通过 `.agent-context/` 说清当前状态、下一步和重要决策。
+- subagent brief 能明显减少子 agent 的无关文件扫描。
+- 用户可以回顾至少 5 个重要 decision 的原因和备选方案。
+- memo 没有被项目临时信息污染。
+- handoff 保持短，不变成大杂烩。
+- 至少 7 次真实 session 后，用户仍愿意维护 `.agent-context/`。
+- reviewer 至少捕获过一次不该写入或需要澄清的内容。
+- 没有把 AI 推断误记为用户确认事实。
 
-## 15. 版本路线
+失败信号:
 
-### V0 - Requirements and Skill Draft
+- 用户仍然让 agent 从 README/git log 重新推断所有进展。
+- handoff 文件越来越长，没人愿意读。
+- decision records 没有记录 rejected alternatives，无法解释当时为什么选。
+- subagent brief 变成复制整份 spec。
+- 维护成本超过重新解释的成本。
 
-- 完成本需求说明。
-- 编写 skill 设计文档。
-- 编写最小 `SKILL.md`。
-- 定义 `task-ledger.md` schema。
+## 17. 版本路线
 
-### V1 - Manual Ledger and Plans
+### V0 - 文档和设计验证
 
-- 支持读取/创建 `.agent-ledger/`。
-- 支持 ChangeSet。
-- 支持用户确认后更新账本。
-- 支持生成 `today-plan.md` 和 `weekly-plan.md`。
+- 更新需求说明。
+- 更新 spec。
+- 用当前项目 dogfood 一次 `.agent-context/` 结构。
+- 决定 skill 名称是否从 `agent-continuity-ledger` 调整为 `agent-context-sync`。
 
-### V1.1 - Calendar Export
+### V1 - 本地 Context Sync Skill
 
-- 增加 `export_ics.py`。
-- 只导出确认时间块。
-- 加入 `.ics` 基础验证。
+- 实现 `SKILL.md`。
+- 实现 references 和 templates。
+- 支持初始化 `.agent-context/`。
+- 支持 SyncSet。
+- 支持 handoff、session log、decision records、subagent briefs。
+- 支持 reviewer checklist。
 
-### V1.2 - Ledger Validation
+### V1.1 - 轻量验证工具
 
-- 增加 `validate_ledger.py`。
-- 检查任务账本一致性。
-- 检查计划引用一致性。
+- 增加 context 文件结构检查脚本。
+- 检查 decision 文件字段完整性。
+- 检查 brief 是否过大或缺少任务边界。
 
-### V2 - External Export
+### V2 - 外部资料读取
 
-- 导出 Markdown、JSON、CSV。
-- 可选导出到 Todoist、Notion、Trello 或 GitHub Issues 的 patch 文件。
-- 仍不自动写入外部系统。
+- 支持用户授权的 websearch、飞书、GitHub、Notion 等资料读取。
+- 仍默认只写本地 `.agent-context/`。
+- 外部写入继续保持人工确认。
 
-### V3 - Automation
+### V3 - 应用化或云端化
 
-- 在任务账本验证稳定后, 再考虑 heartbeat 或 scheduler。
-- 自动生成日报/周报草稿。
-- 外部写入仍需人工确认。
+- 在本地 skill 被证明有效后，再考虑 UI、云端、团队空间、权限隔离和商业化。
 
-## 16. 开放问题
+## 18. 开放问题
 
-- 第一版账本应使用 Markdown 还是 YAML。
-- `.agent-ledger/` 应默认放在项目根目录, 还是用户主目录。
-- 是否需要支持多个 project ledger。
-- 是否默认生成 `.ics`, 还是只有用户显式要求才生成。
-- `source_quote` 对于口头讨论应如何记录。
-- 是否需要把本需求拆成 skill 设计文档和实现计划。
+- skill 最终名称是否改为 `agent-context-sync`，还是保留 `agent-continuity-ledger`。
+- V1 是否需要 `index.md` 作为目录入口，还是只用 `handoff.md`。
+- SyncSet 是否必须每次都等待确认，还是可以允许用户授权“本 session 内自动写 session-log”。
+- decision record 的编号是否按日期全局递增，还是按目录内现有文件递增。
+- subagent brief 是否默认写文件，还是只在用户要求时写入。
+- 当前仓库是否要马上 dogfood 创建 `.agent-context/`，还是先只完成 skill 设计。
 
-## 17. 设计结论
+## 19. 设计结论
 
-推荐先做 `agent-continuity-ledger` skill, 而不是 app。
+推荐将第一版产品从“任务账本 + 日程导出”收敛为“Agent Context Sync + Decision Memory”。这个方向更贴近用户刚观察到的真实痛点: 多 session 和 subagent 之间缺少可靠、干净、可审计的上下文同步机制。
 
-第一版的价值判断是:
-
-- Codex 已经能拆任务, 所以 skill 不应只做任务拆分。
-- 市面已有大量任务和日历产品, 所以 skill 不应替代它们。
-- 真正缺口是 AI 工作连续性、任务来源证据、变更审阅和下一步契约。
-- `.ics` 有用, 但只能作为已确认计划的日历投影。
-- 任务账本必须是源, 日历和计划都是派生物。
-
-如果用户连续两周愿意使用这个 skill 维护真实任务, 才值得继续做 app、scheduler、connector 或更强自动化。
+V1 不和 Trello、日历、Todoist 或 Codex 任务拆分能力正面竞争。它的价值在于让 AI 工作过程有一个本地、清晰、可复盘的上下文协议: 当前做到哪里、下一步是什么、为什么这样设计、哪些方案已被否定、subagent 应该知道什么。

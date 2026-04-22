@@ -1,1036 +1,799 @@
-# Agent Continuity Ledger Skill - Spec
+# Agent Context Sync and Decision Memory Skill - Spec
 
 日期: 2026-04-22
 状态: 实施前规格草案
 需求来源: `docs/superpowers/specs/2026-04-22-agent-continuity-ledger-skill-requirements.md`
-目标产物: Codex skill `agent-continuity-ledger`
+目标产物: Codex skill `agent-context-sync`
+历史名称: `agent-continuity-ledger`
 
 ## 1. Spec 结论
 
-第一版实现一个 Codex skill, 名称为 `agent-continuity-ledger`。
+第一版实现一个本地 Codex skill，用 `.agent-context/` 帮助 AI 在多 session、多 subagent 工作中同步必要上下文，并记录重要 decision 的由来。
 
-它的最小闭环是:
+最小闭环:
 
 ```text
-用户输入任务/资料
-  -> 读取 .agent-ledger/task-ledger.md
-  -> 生成 ChangeSet
+用户讨论项目或要求同步上下文
+  -> 读取 .agent-context/handoff.md、session-log.md 和相关 decisions
+  -> 整理本次变化、决策和 subagent 需求
+  -> 生成 SyncSet
   -> Reviewer 自检
   -> 用户确认
-  -> 更新 task-ledger.md 和 decision-log.md
-  -> 生成 today-plan.md 或 weekly-plan.md
-  -> 可选生成 confirmed-timeblocks.json
-  -> 可选调用 export_ics.py 生成 confirmed-timeblocks.ics
+  -> 更新 handoff.md、追加 session-log.md、创建或更新 decision records、生成 subagent briefs
+  -> 下次 session 或 subagent 先读取这些文件再继续
 ```
 
 核心设计决策:
 
-- 使用 Markdown 作为第一版账本源, 因为它适合人工审阅、git diff 和 AI 编辑。
-- 使用结构化 fenced YAML block 表达 task metadata, 避免纯自然语言账本腐烂。
-- 使用 ChangeSet 作为所有写入前的中间层, 避免 AI 直接改账本。
-- 使用 Reviewer checklist 作为规则化自检, 不把 Reviewer 包装成绝对安全门。
-- 使用 `.ics` 作为已确认时间块的投影文件, 不作为任务状态源。
-- 使用 `confirmed-timeblocks.json` 作为 `.ics` 脚本输入, 避免脚本解析自由格式 Markdown。
-- 不假设 Codex 自带跨 session 任务记忆。跨 session 连续性必须通过读取 `.agent-ledger/task-ledger.md` 显式恢复。
+- 使用 Markdown 作为 V1 存储格式，优先保证人类可读、git diff 友好、AI 易编辑。
+- 使用 `.agent-context/` 而不是 `.agent-ledger/`，避免产品语义滑向任务账本。
+- `handoff.md` 只保存当前交接状态，不保存完整历史。
+- `session-log.md` 用追加日志保存重要进展和 subagent 结果。
+- `decisions/*.md` 用 ADR-like 文件保存重要决策、原因、备选方案和影响。
+- `briefs/*.md` 用最小上下文包支持 subagent，不追求继承完整 memory。
+- 使用 `SyncSet` 作为所有写入前的用户确认层。
+- 使用 reviewer checklist 作为上下文质量门，不把 reviewer 包装成绝对安全保证。
+- V1 不做 task ledger、calendar、`.ics`、scheduler 或外部 connector。
 
 ## 2. Skill 包结构
 
 目标目录:
 
 ```text
-agent-continuity-ledger/
+agent-context-sync/
   SKILL.md
-  scripts/
-    export_ics.py
   references/
-    task-ledger-schema.md
-    changeset-protocol.md
-    planning-rules.md
-    calendar-export-rules.md
+    context-files.md
+    decision-record-schema.md
+    syncset-protocol.md
+    subagent-briefing.md
+    reviewer-checklist.md
   assets/
-    task-ledger-template.md
-    today-plan-template.md
-    weekly-plan-template.md
+    handoff-template.md
+    decision-template.md
+    session-log-template.md
+    subagent-brief-template.md
+    syncset-template.md
   agents/
     openai.yaml
 ```
 
-V1 不实现:
+V1 不包含:
 
+- `scripts/export_ics.py`
 - `validate_ledger.py`
+- task planning rules
+- calendar export rules
 - external connector
 - scheduler
 - app UI
-- webcal server
-- OAuth
-- CalDAV
-
-这些可以进入后续版本。
 
 ## 3. `SKILL.md` 规格
 
 ### 3.1 Frontmatter
 
-`SKILL.md` 必须包含:
-
 ```yaml
 ---
-name: agent-continuity-ledger
-description: Maintain an evidence-based task ledger, review task changes, preserve work continuity across sessions, generate daily or weekly Markdown plans, and optionally export confirmed time blocks to .ics calendar files when users discuss tasks, priorities, schedules, next actions, planning, or AI handoff.
+name: agent-context-sync
+description: Keep AI work continuity across sessions and subagents by maintaining local handoff files, session logs, decision records, and subagent briefs. Use when users ask to remember project progress, update context, record why a decision was made, prepare subagents, resume prior work, avoid polluting long-term memory, or synchronize necessary project context in local files.
 ---
 ```
 
 触发描述必须覆盖:
 
-- task capture
-- task memory
-- task review
-- next action
-- daily plan
-- weekly plan
-- calendar export
-- AI handoff
+- cross-session continuity
+- subagent briefing
+- handoff update
+- decision memory
+- project-local context
+- memo cleanliness
+- resume work
+- decision rationale
 
 ### 3.2 Body 结构
 
-`SKILL.md` 正文保持短, 只放执行流程和引用导航。
+`SKILL.md` 正文应保持短，只放核心流程和引用导航。
 
-建议结构:
+推荐结构:
 
 ```markdown
-# Agent Continuity Ledger
+# Agent Context Sync
 
 ## Core Rules
 
-## Workflow
+## Startup Workflow
 
-## Ledger Location
+## SyncSet Before Writes
 
-## ChangeSet Before Edits
+## Decision Records
 
-## Planning
+## Subagent Briefs
 
-## Calendar Export
+## Reviewer
 
 ## References
 ```
 
 `SKILL.md` 必须明确:
 
-- 默认 ledger 目录为当前工作区的 `.agent-ledger/`。
-- 修改账本前必须先生成 ChangeSet。
-- 用户未确认前不得写入 `task-ledger.md`、`decision-log.md` 或 `.ics`。
-- `.ics` 只导出 confirmed time blocks。
-- 遇到用户要求外部写入、发消息、删除文件、执行命令时, 必须拒绝自动执行并改为生成人工任务或草稿。
+- 默认上下文目录是当前 workspace 的 `.agent-context/`。
+- 新 session 恢复工作时，先读 `handoff.md`，再读相关 decisions 和最近 `session-log.md`。
+- 写入 `.agent-context/` 前必须先展示 SyncSet。
+- 用户未确认前，不得把 AI 推断写成 accepted decision。
+- 长期 memo 只保存稳定偏好和跨项目事实，项目临时上下文写入 `.agent-context/`。
+- subagent brief 应最小化，只包含任务必要上下文。
+- V1 不做任务看板、日程、`.ics`、后台自动执行或外部写入。
 
 ### 3.3 Reference 加载规则
 
-`SKILL.md` 应按需读取 references:
+`SKILL.md` 按需读取 references:
 
-- 处理账本结构时读取 `references/task-ledger-schema.md`。
-- 生成或应用 ChangeSet 时读取 `references/changeset-protocol.md`。
-- 生成今日/本周计划时读取 `references/planning-rules.md`。
-- 导出 `.ics` 时读取 `references/calendar-export-rules.md`。
+- 需要创建或修复 `.agent-context/` 文件时，读 `references/context-files.md`。
+- 需要记录、更新、复审 decision 时，读 `references/decision-record-schema.md`。
+- 需要生成或应用 SyncSet 时，读 `references/syncset-protocol.md`。
+- 需要准备 subagent 时，读 `references/subagent-briefing.md`。
+- 展示 SyncSet 前，读或执行 `references/reviewer-checklist.md` 中的 checklist。
 
-## 4. 工作区文件结构
+## 4. Workspace 文件结构
 
 Skill 在用户当前项目根目录维护:
 
 ```text
-.agent-ledger/
-  task-ledger.md
-  decision-log.md
-  plans/
-    today-plan.md
-    weekly-plan.md
-  calendar/
-    confirmed-timeblocks.json
-    confirmed-timeblocks.ics
+.agent-context/
+  handoff.md
+  session-log.md
+  decisions/
+    DEC-YYYY-MM-DD-NNN-short-title.md
+  briefs/
+    subagent-YYYY-MM-DD-NNN-topic.md
 ```
 
 创建规则:
 
-- 如果 `.agent-ledger/` 不存在, 先展示将创建的文件列表并请求用户确认。
-- 如果 `task-ledger.md` 不存在, 使用 `assets/task-ledger-template.md` 创建。
-- 如果 `decision-log.md` 不存在, 创建空日志模板。
-- `plans/` 和 `calendar/` 可在首次需要时创建。
+- 如果 `.agent-context/` 不存在，先展示将创建的文件列表并请求确认。
+- `handoff.md` 和 `session-log.md` 在初始化时创建。
+- `decisions/` 和 `briefs/` 在初始化时创建空目录。
+- decision 和 brief 只在有实际内容时创建文件。
+- 不创建 task ledger、plan、calendar 文件。
 
 安全边界:
 
-- Skill 默认只写 `.agent-ledger/`。
-- 如用户明确要求导出到其他路径, 必须先展示目标路径。
-- 不删除 `.agent-ledger/` 以外的文件。
+- 默认只写 `.agent-context/`。
+- 不删除 decision 历史文件。
+- 不覆盖用户未确认的上下文内容。
+- 如需写入 `.agent-context/` 之外的路径，必须显示目标路径并等待用户明确确认。
 
-## 5. Cross-session continuity
+## 5. Startup workflow
 
-Codex skill 不能依赖模型自然记住上一个 session 的任务状态。新 session 若没有账本, 只能重新读取 README、docs、git log、git status 等项目材料来推断进度。该推断可能遗漏用户确认过的任务、计划取舍和下一步契约。
+当用户提出以下请求时触发 startup workflow:
 
-`agent-continuity-ledger` 的核心差异化是将这些状态写入 `.agent-ledger/task-ledger.md` 和 `.agent-ledger/decision-log.md`, 让新 session 能从固定文件恢复上下文。
-
-### 5.1 Startup rule
-
-当用户提出以下请求时:
-
-- “上次做到哪里了?”
+- “上次做到哪里了？”
 - “继续这个项目。”
-- “根据任务账本安排今天。”
-- “帮我看看当前进度。”
-- “用 agent-continuity-ledger 接着做。”
+- “读取上下文。”
+- “根据项目记忆接着做。”
+- “帮我同步一下当前状态。”
+- “给 subagent 准备上下文。”
 
-Skill 必须按顺序执行:
+执行顺序:
 
-1. 检查 `.agent-ledger/task-ledger.md` 是否存在。
-2. 如果存在, 先读取 task ledger 和 decision log。
-3. 再读取 README、spec、git log 或当前工作区状态作为补充上下文。
-4. 输出当前状态摘要、下一步行动、阻塞项和需要确认的问题。
-5. 如果 ledger 与 git/docs 推断冲突, 生成 ChangeSet 或澄清问题, 不直接覆盖 ledger。
+1. 检查 `.agent-context/handoff.md` 是否存在。
+2. 如果存在，先读取 `handoff.md`。
+3. 根据 handoff 中的相关 decision 链接读取 `decisions/*.md`。
+4. 读取 `session-log.md` 中最近的相关条目。
+5. 再按任务需要读取 README、spec、git status、git log 或源码。
+6. 输出当前目标、当前状态、下一步、阻塞、活跃问题和可能过期的上下文。
+7. 如果 `.agent-context/` 与 repo 状态冲突，生成 SyncSet 或澄清问题，不直接覆盖。
 
-### 5.2 Missing ledger rule
+缺失上下文规则:
 
-如果 `.agent-ledger/task-ledger.md` 不存在:
+1. 如果 `.agent-context/` 不存在，说明没有发现本地上下文同步包。
+2. 说明当前只能基于仓库文件、git 状态和对话内容推断。
+3. 提供初始化 `.agent-context/` 的 SyncSet。
+4. 等待用户确认后再创建文件。
 
-1. 明确说明没有发现跨 session 任务账本。
-2. 说明当前只能基于仓库文件和 git 状态推断进度。
-3. 提供创建 `.agent-ledger/` 的 ChangeSet。
-4. 等待用户确认后再创建账本。
-
-### 5.3 Continuity acceptance
-
-跨 session 连续性通过以下测试验收:
-
-1. Session A 创建 `.agent-ledger/task-ledger.md`, 写入至少 3 个任务、1 个阻塞项和 1 个下一步行动。
-2. 关闭 Session A。
-3. Session B 在同一 workspace 中启动。
-4. 用户问“上次做到哪里了?”
-5. Skill 必须读取 ledger, 而不是只重新扫描 README/git。
-6. 输出必须包含上次确认任务、当前状态、阻塞项、下一步行动和是否需要更新计划。
-
-## 6. `task-ledger.md` 规格
-
-### 5.1 文件结构
-
-`task-ledger.md` 是任务真相源。第一版使用 Markdown + fenced YAML task card。
+## 6. `handoff.md` 规格
 
 模板:
 
 ```markdown
-# Agent Task Ledger
+# Agent Handoff
 
-Ledger version: 1
-Timezone: Asia/Hong_Kong
-Last reviewed: 2026-04-22
+Last updated: 2026-04-22T18:00:00+08:00
+Updated by: Codex
+Staleness: stale after the current design/spec phase changes
 
-## Inbox
+## Current Objective
 
-## Ready
+One or two sentences.
 
-## Active
+## Current State
 
-## Waiting
+Short summary of where the project stands.
 
-## Scheduled
+## Next Action
 
-## Done
+The single best next action.
 
-## Dropped
-```
-
-每个任务使用以下格式:
-
-````markdown
-### task-20260422-001 - Write skill spec
-
-```yaml
-id: task-20260422-001
-title: Write skill spec
-status: ready
-created_at: 2026-04-22T16:55:00+08:00
-updated_at: 2026-04-22T16:55:00+08:00
-source:
-  type: conversation
-  quote: "按照需求写个spec吧"
-  reference: null
-user_confirmation: confirmed
-priority: P1
-risk_level: low
-confidence: high
-due: null
-effort_minutes: 90
-energy: deep_work
-dependencies: []
-blockers: []
-next_action: Draft the skill spec document from the approved requirements.
-acceptance_criteria:
-  - Spec defines skill structure, ledger schema, ChangeSet protocol, planning rules, and .ics export interface.
-scheduled:
-  date: null
-  start: null
-  end: null
-notes: []
-```
-````
-
-任务正文可在 YAML block 后追加人类备注, 但核心字段必须保留在 YAML 中。
-
-### 5.2 必填字段
-
-每个 task 必须有:
-
-- `id`
-- `title`
-- `status`
-- `created_at`
-- `updated_at`
-- `source`
-- `user_confirmation`
-- `priority`
-- `risk_level`
-- `confidence`
-- `next_action`
-- `acceptance_criteria`
-
-### 5.3 状态枚举
-
-合法状态:
-
-- `inbox`
-- `ready`
-- `active`
-- `waiting`
-- `scheduled`
-- `done`
-- `dropped`
-
-状态语义:
-
-- `inbox`: 捕获但未整理。
-- `ready`: 可以开始。
-- `active`: 正在做。
-- `waiting`: 等待外部信息、用户输入或依赖。
-- `scheduled`: 已确认时间块。
-- `done`: 已完成。
-- `dropped`: 明确不做。
-
-### 5.4 用户确认枚举
-
-合法值:
-
-- `confirmed`
-- `ai_inferred`
-- `needs_user_confirmation`
-
-规则:
-
-- 用户明确说出的任务可标记为 `confirmed`。
-- AI 推断出的任务必须标记为 `ai_inferred` 或 `needs_user_confirmation`。
-- `ai_inferred` 任务不能进入 `.ics`。
-- `needs_user_confirmation` 任务不能被标记为 `ready`, 除非用户确认。
-
-### 5.5 风险等级
-
-合法值:
-
-- `low`
-- `medium`
-- `high`
-- `blocked`
-
-风险定义:
-
-- `low`: 只读、整理、写本地账本或生成草稿。
-- `medium`: 需要用户判断, 可能影响计划或承诺。
-- `high`: 涉及外部写入、发送消息、删除文件、执行命令、修改代码或敏感信息。
-- `blocked`: 不应由 skill 自动处理。
-
-## 7. `decision-log.md` 规格
-
-`decision-log.md` 是按时间追加的决策日志。
-
-模板:
-
-```markdown
-# Agent Decision Log
-
-## 2026-04-22
-
-### 2026-04-22T17:00:00+08:00 - accept_changeset
-
-```yaml
-changeset_id: cs-20260422-001
-user_decision: accepted_with_edits
-affected_tasks:
-  - task-20260422-001
-summary: User accepted the skill spec task and asked to continue.
-notes:
-  - Keep .ics export optional.
-```
-```
-
-必须记录:
-
-- 时间。
-- ChangeSet ID。
-- 用户决策。
-- 影响的 task ID。
-- 摘要。
-- 修改说明或保留意见。
-
-日志只追加, 不重写历史。若记录有误, 追加 correction entry。
-
-## 8. ChangeSet 规格
-
-### 7.1 ChangeSet ID
-
-格式:
-
-```text
-cs-YYYYMMDD-NNN
-```
-
-例如:
-
-```text
-cs-20260422-001
-```
-
-### 7.2 ChangeSet 输出格式
-
-ChangeSet 必须先展示给用户, 不直接写文件。
-
-标准格式:
-
-```markdown
-## ChangeSet cs-20260422-001
-
-### Summary
-
-- Proposed additions: 1
-- Proposed updates: 0
-- Proposed status changes: 0
-- Proposed schedule blocks: 0
-- Clarification questions: 1
-- Blocked items: 0
-
-### Proposed Additions
-
-#### temp-task-001 - Write skill spec
-
-```yaml
-action: add_task
-target: task-ledger.md
-proposed_id: task-20260422-001
-title: Write skill spec
-source_quote: "按照需求写个spec吧"
-user_confirmation: confirmed
-priority: P1
-risk_level: low
-confidence: high
-next_action: Draft the skill spec document from the approved requirements.
-acceptance_criteria:
-  - Spec defines skill structure, ledger schema, ChangeSet protocol, planning rules, and .ics export interface.
-fields_requiring_confirmation: []
-reviewer_decision: accept_draft
-```
-
-### Reviewer Findings
-
-- All proposed tasks have a source quote.
-- No high-risk action detected.
-
-### User Decision Needed
-
-Please confirm whether to apply this ChangeSet.
-```
-
-### 7.3 ChangeSet item actions
-
-合法 action:
-
-- `add_task`
-- `update_task`
-- `change_status`
-- `add_note`
-- `add_blocker`
-- `remove_blocker`
-- `schedule_timeblock`
-- `unschedule_timeblock`
-- `ask_clarification`
-- `mark_manual_only`
-
-禁止 action:
-
-- `delete_task`
-- `external_write`
-- `send_message`
-- `run_command`
-- `delete_file`
-
-如果用户要求删除任务, skill 应使用 `change_status: dropped`, 不物理删除。
-
-### 7.4 应用 ChangeSet
-
-应用前必须有用户确认。
-
-可接受确认:
-
-- “接受”
-- “全部接受”
-- “按这个改”
-- “确认写入”
-- “修改 X 后接受”
-
-模糊回复不算确认, 例如:
-
-- “看起来不错”
-- “可以考虑”
-- “差不多”
-
-应用后必须:
-
-- 更新 `task-ledger.md`。
-- 追加 `decision-log.md`。
-- 在回复中说明写入了哪些任务或计划。
-
-## 9. Reviewer 规格
-
-Reviewer 是每次 ChangeSet 输出前的自检阶段。
-
-### 8.1 Reviewer checklist
-
-必须检查:
-
-- 每个任务是否有 `source_quote`。
-- `source_quote` 是否真的支持任务。
-- 是否把 AI 推断写成用户确认。
-- `next_action` 是否是具体动作。
-- `acceptance_criteria` 是否可验证。
-- 是否重复已有任务。
-- 是否缺少关键依赖。
-- 是否含高风险动作。
-- 是否错误进入日历或计划。
-- 是否超出 skill 范围。
-
-### 8.2 Reviewer decisions
-
-合法 decision:
-
-- `accept_draft`
-- `needs_user_input`
-- `revise_once`
-- `manual_only`
-- `blocked`
-
-处理规则:
-
-- `accept_draft`: 可展示给用户。
-- `needs_user_input`: 不写账本, 先问用户。
-- `revise_once`: AI 自行重写 ChangeSet 一次, 然后再次自检。
-- `manual_only`: 可进入账本, 但不能进入计划或 `.ics`。
-- `blocked`: 不写账本, 解释原因。
-
-## 10. 计划生成规格
-
-### 9.1 输入
-
-计划生成输入:
-
-- `task-ledger.md`
-- 用户提供的可用时间。
-- 用户提供的日期范围。
-- 当前日期和时区。
-- 可选偏好, 例如 deep work 放上午。
-
-如果用户没有给出可用时间:
-
-- 今日计划默认询问一次。
-- 如果用户要求直接生成, 使用保守默认值: 2 小时 deep work + 1 小时 shallow work。
-- 必须在计划中标注该假设。
-
-### 9.2 排序规则
-
-排序流程:
-
-1. 排除 `done` 和 `dropped`。
-2. 将 `waiting` 放到等待区。
-3. 将 `needs_user_confirmation` 放到澄清区。
-4. 优先硬截止日期。
-5. 优先外部承诺。
-6. 优先能解锁后续任务的任务。
-7. 优先高影响、验收清楚、耗时可控的任务。
-8. 对延期多次但仍重要的任务加权。
-9. 降权高风险、低置信度、范围不清任务。
-10. 每日计划只使用 60% 到 70% 可用时间。
-
-### 9.3 `today-plan.md`
-
-输出位置:
-
-```text
-.agent-ledger/plans/today-plan.md
-```
-
-模板:
-
-```markdown
-# Today Plan - 2026-04-22
-
-Timezone: Asia/Hong_Kong
-Plan status: draft
-Capacity assumption: 180 minutes available, 120 minutes scheduled
-
-## Outcomes
-
-- Outcome 1
-
-## Confirmed Time Blocks
-
-| Time | Task | Reason | Confirmed |
-| --- | --- | --- | --- |
-| 09:30-10:30 | task-20260422-001 - Write skill spec | P1, unblocks implementation | no |
-
-## Candidate Tasks
-
-- task-20260422-001 - Write skill spec
-
-## Not Scheduled
-
-- task-20260422-002 - Waiting for user confirmation
-
-## Blocked or Waiting
+## Blockers
 
 - None
 
-## Questions
+## Active Questions
 
-- Confirm whether 09:30-10:30 is acceptable.
+- Question or assumption that still needs user input.
 
-## Assumptions
+## Relevant Decisions
 
-- User did not provide calendar availability.
+- DEC-2026-04-22-001-context-sync-scope.md
+
+## Files To Read First
+
+- docs/superpowers/specs/...
+
+## Do Not Reopen Unless Needed
+
+- Files or topics that were already rejected or are not needed for the next step.
+
+## Notes
+
+Short, current-only notes.
 ```
 
-`Confirmed Time Blocks` 只有在用户确认后才可写入 `confirmed-timeblocks.json`。
+Rules:
 
-### 9.4 `weekly-plan.md`
+- Keep under roughly 150 lines.
+- Prefer links to decision records over copying full rationale.
+- Include stale condition.
+- Keep one clear next action.
+- Do not store secrets.
+- Do not store long chat transcripts.
+- Do not list every task unless directly needed for handoff.
 
-输出位置:
+## 7. `session-log.md` 规格
 
-```text
-.agent-ledger/plans/weekly-plan.md
-```
-
-模板:
+Template:
 
 ```markdown
-# Weekly Plan - 2026-W17
+# Agent Session Log
 
-Timezone: Asia/Hong_Kong
-Plan status: draft
+## 2026-04-22T18:00:00+08:00 - Context sync requirements update
 
-## Outcomes
+Goal: Update requirements and spec around context sync and decision memory.
 
-1. Outcome A
-2. Outcome B
-3. Outcome C
+What changed:
+- Reframed V1 away from task ledger and calendar export.
+- Introduced .agent-context/ as the workspace contract.
 
-## Daily Focus
+User confirmed:
+- Decision memory is required.
 
-| Day | Focus | Candidate tasks |
-| --- | --- | --- |
-| Monday | Planning | task-... |
+AI inferred:
+- V1 should avoid .ics and scheduler until context sync is proven.
 
-## Key Sequence
+Subagent results:
+- None in this session.
 
-1. task-...
-2. task-...
+Context files updated:
+- handoff.md
+- decisions/DEC-...
 
-## Waiting
-
-- task-...
-
-## Risks
-
-- Risk A
-
-## Excluded
-
-- task-... because ...
+Follow-up:
+- Review the updated spec before implementation.
 ```
 
-## 11. Calendar export 规格
+Rules:
 
-### 10.1 Export boundary
+- Append entries chronologically.
+- Summarize only important changes.
+- Record subagent outcomes after integration.
+- Use correction entries rather than silently rewriting history when meaning changes.
+- Avoid storing raw sensitive text.
 
-`.ics` export 只导出:
+## 8. Decision record 规格
 
-- 用户确认过的 focus time block。
-- 用户确认过的 deadline event。
-
-不导出:
-
-- backlog。
-- `inbox`、`waiting`、`dropped`、`done` 任务。
-- `ai_inferred` 任务。
-- `needs_user_confirmation` 任务。
-- 高风险任务。
-- 会议邀请。
-- 参与人。
-- RSVP。
-
-### 10.2 JSON 输入
-
-AI 在用户确认时间块后写入:
+Filename:
 
 ```text
-.agent-ledger/calendar/confirmed-timeblocks.json
+.agent-context/decisions/DEC-YYYY-MM-DD-NNN-short-title.md
 ```
 
-Schema:
+Template:
 
-```json
-{
-  "calendar_name": "Agent Confirmed Time Blocks",
-  "timezone": "Asia/Hong_Kong",
-  "generated_at": "2026-04-22T17:30:00+08:00",
-  "events": [
-    {
-      "uid": "task-20260422-001-20260423T093000@agent-continuity-ledger.local",
-      "task_id": "task-20260422-001",
-      "type": "timeblock",
-      "title": "Write skill spec",
-      "description": "Task: task-20260422-001\nSource: User requested a spec from requirements.\nAcceptance: Spec is written and reviewed.\nRisk: low",
-      "start": "2026-04-23T09:30:00+08:00",
-      "end": "2026-04-23T10:30:00+08:00",
-      "all_day": false
-    }
-  ]
-}
+```markdown
+# DEC-YYYY-MM-DD-NNN: Decision Title
+
+Status: proposed
+Date: 2026-04-22
+Confirmed by: pending
+Related sessions:
+- 2026-04-22T18:00:00+08:00
+Related files:
+- docs/superpowers/specs/...
+Supersedes: none
+Superseded by: none
+
+## Context
+
+What was happening when this decision was considered.
+
+## Decision
+
+The chosen option.
+
+## Reasons
+
+- Reason 1
+
+## Rejected Alternatives
+
+- Alternative: why rejected.
+
+## Evidence
+
+- Source, observation, subagent result, user statement, or repo fact.
+
+## Consequences
+
+- Expected tradeoff or follow-up.
+
+## Review Triggers
+
+- Condition that should cause this decision to be revisited.
 ```
 
-Deadline event:
+Status values:
 
-```json
-{
-  "uid": "task-20260422-001-deadline-20260424@agent-continuity-ledger.local",
-  "task_id": "task-20260422-001",
-  "type": "deadline",
-  "title": "Deadline: Write skill spec",
-  "description": "Confirmed deadline for task-20260422-001",
-  "date": "2026-04-24",
-  "all_day": true
-}
-```
+- `proposed`
+- `accepted`
+- `superseded`
+- `rejected`
 
-### 10.3 `export_ics.py` CLI
+Rules:
 
-Command:
+- Do not mark as `accepted` unless user clearly confirms or the decision is already established by committed project docs.
+- AI-generated recommendations start as `proposed`.
+- When replacing a decision, update the old record to `superseded` and link the new record.
+- Do not delete old decision files.
+- Always include rejected alternatives for important product or architecture choices.
+- Evidence can be a concise paraphrase; do not copy long copyrighted or sensitive text.
 
-```powershell
-python agent-continuity-ledger/scripts/export_ics.py `
-  --input .agent-ledger/calendar/confirmed-timeblocks.json `
-  --output .agent-ledger/calendar/confirmed-timeblocks.ics
-```
+## 9. Subagent brief 规格
 
-Requirements:
-
-- Use Python standard library only.
-- Read UTF-8 JSON.
-- Write UTF-8 `.ics`.
-- Use CRLF line endings.
-- Escape commas, semicolons, backslashes and newlines in text fields.
-- Fold long iCalendar lines.
-- Preserve provided `uid`.
-- Generate `DTSTAMP` at export time in UTC.
-- For timed events, emit `DTSTART` and `DTEND`.
-- For all-day events, emit date-only `DTSTART` and exclusive date-only `DTEND`.
-- Include `PRODID:-//agent-continuity-ledger//EN`.
-- Do not emit `VTODO`, `ATTENDEE`, `ORGANIZER`, `VALARM`, `RRULE`, or `METHOD`.
-
-### 10.4 Output path
-
-Default output:
+Filename:
 
 ```text
-.agent-ledger/calendar/confirmed-timeblocks.ics
+.agent-context/briefs/subagent-YYYY-MM-DD-NNN-topic.md
 ```
 
-The skill response after export must say:
+Template:
 
-- `.ics` is a one-way export.
-- Importing may create a snapshot, not live sync.
-- Use a separate calendar for import if possible.
-- Re-importing may duplicate events depending on calendar client behavior.
+```markdown
+# Subagent Brief: Topic
 
-## 12. Assets 规格
+Created: 2026-04-22T18:00:00+08:00
+Expires: after the current design review
+Owner session: main
 
-### 11.1 `task-ledger-template.md`
+## Mission
 
-Must include:
+What the subagent should accomplish.
 
-- Header.
-- Ledger version.
-- Timezone placeholder.
-- Last reviewed.
-- Seven status sections.
-- One commented example task.
+## Role
 
-### 11.2 `today-plan-template.md`
+Supporter, light skeptic, strong skeptic, explorer, worker, reviewer, or other.
 
-Must include:
+## Required Context
 
-- Date.
-- Timezone.
-- Plan status.
-- Capacity assumption.
-- Outcomes.
-- Confirmed time blocks.
-- Candidate tasks.
-- Not scheduled.
-- Blocked or waiting.
-- Questions.
-- Assumptions.
+- Minimal facts the subagent must know.
 
-### 11.3 `weekly-plan-template.md`
+## Relevant Decisions
 
-Must include:
+- DEC-...
 
-- ISO week.
-- Timezone.
-- Plan status.
-- Outcomes.
-- Daily focus.
-- Key sequence.
-- Waiting.
-- Risks.
-- Excluded.
+## Files To Read
 
-## 13. `agents/openai.yaml` 规格
+- Specific files.
 
-Recommended UI metadata:
+## Files Not To Read Unless Needed
 
-```yaml
-display_name: Agent Continuity Ledger
-short_description: Keep AI task handoffs, task changes, plans, and optional calendar exports consistent across sessions.
-default_prompt: Use this skill to capture tasks from our discussion, propose a reviewed ChangeSet, update the local task ledger after confirmation, and generate a daily or weekly plan.
+- Paths or areas that are likely irrelevant.
+
+## Constraints
+
+- Scope, safety, write boundaries, or assumptions.
+
+## Expected Output
+
+- The format and level of detail expected.
+
+## Non-goals
+
+- What the subagent should not solve.
 ```
 
-Actual `openai.yaml` should be generated with the skill creator tooling if available.
+Rules:
 
-## 14. Error handling
+- Brief should be scoped to one subagent mission.
+- Do not include full repo summaries.
+- Do not include private user memory unless necessary and confirmed.
+- Prefer file links and decision IDs over long copied context.
+- After subagent returns, summarize useful results into `session-log.md`.
+- Create or update decisions only if the result leads to a user-confirmed decision.
 
-### 13.1 Missing ledger
+## 10. SyncSet 规格
 
-If `.agent-ledger/task-ledger.md` is missing:
+SyncSet is the write proposal shown before editing `.agent-context/`.
 
-1. Explain that no ledger exists.
-2. Offer to create `.agent-ledger/` from templates.
-3. Wait for confirmation before writing files.
+Template:
 
-### 13.2 Malformed ledger
+```markdown
+## SyncSet sync-YYYYMMDD-NNN
 
-If `task-ledger.md` is malformed:
+### Summary
 
-1. Do not overwrite it.
-2. Produce a repair ChangeSet.
-3. Ask user to confirm repair.
+- Handoff updates: 1
+- Session log entries: 1
+- Decision records: 1 new, 0 updated
+- Subagent briefs: 0
+- Items needing confirmation: 1
+- Excluded sensitive items: 0
+
+### Proposed Handoff Updates
+
+- Update Current Objective to: ...
+- Update Next Action to: ...
+
+### Proposed Session Log Entries
+
+- Add entry for 2026-04-22T18:00:00+08:00 summarizing ...
+
+### Proposed Decision Records
+
+#### DEC-2026-04-22-001-context-sync-scope.md
+
+Status: proposed
+Decision: V1 focuses on .agent-context/ rather than task ledger/calendar.
+Requires confirmation: yes
+
+### Proposed Subagent Briefs
+
+- None
+
+### AI-Inferred Items
+
+- V1 should defer .ics because the current pain is context continuity, not scheduling.
+
+### Fields Requiring User Confirmation
+
+- Whether to rename the skill to agent-context-sync.
+
+### Reviewer Findings
+
+- No secrets detected.
+- V1 scope remains outside task manager/calendar.
+
+### User Decision Needed
+
+Confirm whether to apply this SyncSet.
+```
+
+SyncSet ID:
+
+```text
+sync-YYYYMMDD-NNN
+```
+
+Allowed actions:
+
+- `create_context_dir`
+- `update_handoff`
+- `append_session_log`
+- `create_decision`
+- `update_decision_status`
+- `create_subagent_brief`
+- `mark_stale`
+- `add_correction`
+
+Forbidden actions:
+
+- `delete_decision`
+- `write_platform_memo`
+- `external_write`
+- `run_command`
+- `send_message`
+- `delete_file`
+- `create_calendar_event`
+
+Applying rules:
+
+- Require explicit user confirmation before writes.
+- If user says “修改 X 后写入”, adjust SyncSet and apply the adjusted version.
+- If instruction is ambiguous, ask one concise clarifying question.
+- After applying, summarize files changed and any remaining open questions.
+
+## 11. Reviewer 规格
+
+Reviewer runs before showing a SyncSet.
+
+Checklist:
+
+- Does every proposed decision have context and evidence?
+- Are AI-inferred items marked as inferred?
+- Is any user confirmation being overstated?
+- Is the handoff short enough to be useful?
+- Is the handoff focused on current state rather than full history?
+- Are rejected alternatives recorded for major decisions?
+- Are superseded decisions linked instead of overwritten?
+- Does the subagent brief have a narrow mission?
+- Does the subagent brief avoid dumping unnecessary repo context?
+- Are secrets, tokens, credentials or personal data excluded?
+- Is any project-local fact being proposed for platform memo without explicit user request?
+- Is the scope drifting into task manager, calendar, scheduler or external connector?
+- Are file paths and write targets inside `.agent-context/` unless explicitly approved?
+
+Reviewer decisions:
+
+- `accept_draft`: show SyncSet to user.
+- `needs_user_input`: ask user before showing or applying.
+- `revise_once`: revise the SyncSet once and rerun reviewer.
+- `manual_only`: explain that the item should stay as a manual note or discussion, not written as durable memory.
+- `blocked`: do not write; explain why.
+
+## 12. Memo cleanliness rules
+
+Skill must protect platform memory from project-local noise.
+
+Write to platform memo only when:
+
+- User explicitly asks to remember something long term.
+- The information is stable across projects.
+- The information is a preference, identity, durable workflow rule or durable constraint.
+
+Write to `.agent-context/` when:
+
+- It is about the current project.
+- It helps future sessions resume.
+- It helps subagents understand scope.
+- It explains a design or product decision.
+- It may become stale after this project or phase.
+
+Do not write anywhere when:
+
+- It is a secret.
+- It is unverified sensitive data.
+- It is a transient thought with no future value.
+- It is a long raw transcript.
+
+## 13. Error handling
+
+### 13.1 Missing `.agent-context/`
+
+Expected behavior:
+
+1. State that no context sync folder exists.
+2. Offer a SyncSet to create it.
+3. Wait for confirmation.
+4. Create `handoff.md`, `session-log.md`, `decisions/` and `briefs/`.
+
+### 13.2 Malformed context files
+
+Expected behavior:
+
+1. Do not overwrite.
+2. Report the malformed section.
+3. Propose a repair SyncSet.
 4. Preserve original content unless user explicitly asks to replace it.
 
-### 13.3 Ambiguous user instruction
+### 13.3 Conflicting decisions
 
-If user asks for plan but gives no available time:
+Expected behavior:
 
-- Ask once for available time when feasible.
-- If user wants speed, proceed with conservative assumptions and label them clearly.
+1. Identify the conflicting decision records.
+2. Ask whether the new decision supersedes the old one.
+3. If confirmed, update statuses and links.
+4. If not confirmed, record as open question, not accepted decision.
 
-### 13.4 High-risk request
+### 13.4 Oversized handoff
 
-If a task implies external write, command execution, deletion, sensitive data, or irreversible action:
+Expected behavior:
 
-- Do not execute.
-- Create a manual-only task or draft.
-- Mark `risk_level: high` or `blocked`.
-- Ask for explicit confirmation before any future external action.
+1. Propose condensing handoff.
+2. Move durable rationale to decisions.
+3. Move historical summary to session log.
+4. Keep only current objective, state and next action in handoff.
 
-## 15. Acceptance criteria
+### 13.5 High-risk or external action
+
+Expected behavior:
+
+1. Do not execute external action.
+2. Record only a manual note or proposed decision if appropriate.
+3. Ask for explicit user confirmation before any future external write.
+
+## 14. Acceptance criteria
 
 The skill is acceptable when:
 
-- `SKILL.md` frontmatter triggers on task memory, planning, and calendar export requests.
-- `SKILL.md` instructs Codex to read/write only `.agent-ledger/` by default.
-- A new ledger can be created from templates after user confirmation.
-- Existing ledger tasks can be read and summarized.
-- In a new session, existing ledger tasks are read before README/git inference when the user asks for current progress.
-- New user input produces a ChangeSet before file edits.
-- ChangeSet includes source quote, confirmation state, next action and acceptance criteria.
-- Reviewer checklist runs before showing ChangeSet.
-- User-confirmed ChangeSet updates `task-ledger.md`.
-- Applying ChangeSet appends `decision-log.md`.
-- Today plan can be generated from ledger with transparent sorting reasons.
-- Weekly plan can be generated from ledger with outcomes and daily focus.
-- `.ics` export only uses `confirmed-timeblocks.json`.
-- `export_ics.py` produces a valid basic VEVENT calendar from sample JSON.
-- No unconfirmed task is exported to `.ics`.
-- No external write, message send, command execution or deletion is performed by default.
+- `SKILL.md` frontmatter triggers on context sync, handoff, decision memory and subagent briefing requests.
+- Skill initializes `.agent-context/` only after user confirmation.
+- A new session reads `handoff.md` before relying on README/git inference.
+- Relevant decisions are loaded when resuming a project.
+- Session summaries are appended to `session-log.md`.
+- Important decisions are stored as individual files in `decisions/`.
+- Decision records include reasons, rejected alternatives, evidence and review triggers.
+- Subagent briefs include mission, role, required context, files to read, constraints and expected output.
+- SyncSet is shown before any `.agent-context/` write.
+- Reviewer checklist runs before SyncSet is shown.
+- AI-inferred items are clearly marked.
+- Platform memo remains clean unless user explicitly requests long-term memory.
+- No task ledger, calendar, `.ics`, scheduler or external connector is implemented in V1.
 
-## 16. Test cases
+## 15. Test cases
 
-### 16.1 Ledger creation
+### 15.1 Initialize context folder
 
 Input:
 
 ```text
-帮我开始维护这个项目的任务账本。
+帮我开始维护这个项目的 AI 上下文。
 ```
 
 Expected:
 
-- Skill explains it will create `.agent-ledger/`.
-- Skill waits for confirmation.
-- After confirmation, creates `task-ledger.md` and `decision-log.md`.
+- Skill reports `.agent-context/` is missing.
+- Skill proposes a SyncSet to create `handoff.md`, `session-log.md`, `decisions/` and `briefs/`.
+- Skill waits for confirmation before writing.
 
-### 16.2 Capture task
+### 15.2 Resume work
 
 Input:
 
 ```text
-记一下: 明天要把 skill spec 写完, 并确认 .ics 只作为导出。
+上次做到哪里了？
 ```
 
 Expected:
 
-- ChangeSet proposes one task.
-- Source quote preserved.
-- User confirmation state is `confirmed`.
-- `.ics` boundary appears in acceptance criteria.
+- Skill reads `handoff.md` first.
+- Skill reads relevant decisions.
+- Skill summarizes current objective, current state, next action and blockers.
+- README/git status are supplemental, not primary memory.
 
-### 16.3 AI inferred task
+### 15.3 Record decision
 
 Input:
 
 ```text
-我们可能还需要考虑 Todoist 导出。
+记录一下，我们决定 V1 不做日历导出，先做上下文同步。
 ```
 
 Expected:
 
-- Task is marked `ai_inferred` or `needs_user_confirmation`.
-- It does not enter today plan automatically.
-- It does not enter `.ics`.
+- Skill proposes a decision record.
+- Decision includes context, decision, reasons, rejected alternatives and review triggers.
+- Status can be `accepted` because the user explicitly said “我们决定”。
+- Skill writes only after SyncSet confirmation unless current interaction already includes explicit write approval.
 
-### 16.4 Today plan
+### 15.4 Proposed decision from AI inference
 
 Input:
 
 ```text
-我今天有 3 小时, 帮我排一下。
+你觉得这个 skill 要不要以后支持飞书？
 ```
 
 Expected:
 
-- Uses no more than 120 minutes to 130 minutes by default.
-- Produces at most 3 focus items.
-- Explains unscheduled tasks.
+- Skill can discuss options.
+- If recording, decision status is `proposed`, not `accepted`.
+- Requires user confirmation before becoming accepted.
 
-### 16.5 ICS export
+### 15.5 Generate subagent brief
 
 Input:
 
 ```text
-确认把 9:30-10:30 的 spec 写作时间块导出日历。
+给一个强烈反对方 subagent 准备 brief，让它评审这个 V1。
 ```
 
 Expected:
 
-- Creates or updates `confirmed-timeblocks.json`.
-- Runs or instructs running `export_ics.py`.
-- Exports only that confirmed block.
-- Responds with import/sync caveat.
+- Skill creates a focused brief with role, mission, context, files to read and non-goals.
+- Brief references relevant decisions instead of copying all content.
+- Brief tells subagent not to re-solve unrelated app/calendar/scheduler scope unless needed.
 
-### 16.6 Cross-session recovery
+### 15.6 Integrate subagent result
 
-Session A input:
-
-```text
-使用 agent-continuity-ledger, 记录三个任务: 写 skill spec、实现 skill、测试跨 session 恢复。实现 skill 依赖 spec 完成。
-```
-
-Expected Session A:
-
-- Creates or updates `.agent-ledger/task-ledger.md` after confirmation.
-- Records dependency and next action.
-- Appends `decision-log.md`.
-
-Session B input in the same workspace:
+Input:
 
 ```text
-使用 agent-continuity-ledger, 上次做到哪里了?
+把这个 subagent 的结论同步进上下文。
 ```
 
-Expected Session B:
+Expected:
 
-- Reads `.agent-ledger/task-ledger.md` first.
-- Summarizes the three tasks and dependency.
-- Identifies the current next action from ledger.
-- Mentions any mismatch with git/docs only as supplemental context.
+- Skill summarizes useful result into `session-log.md`.
+- If result changes product direction, proposes a decision record.
+- Does not mark decision accepted unless user confirms.
 
-## 17. Two-week dogfood protocol
+### 15.7 Prevent memo pollution
 
-Before building app, scheduler or connectors:
+Input:
 
-1. Use the skill for 10 real sessions.
-2. Track accepted vs rejected ChangeSet items.
-3. Track manual edits per accepted task.
-4. Track whether plans are followed.
-5. Track whether `.ics` exports help or create clutter.
-6. Track whether ledger maintenance feels burdensome.
+```text
+记住这个项目现在先不做 .ics。
+```
+
+Expected:
+
+- Skill asks or infers that this is project-local context.
+- Writes to `.agent-context/decisions/` or `handoff.md`, not platform memo.
+- Explains that memo is reserved for durable cross-project preferences.
+
+## 16. Dogfood protocol
+
+Before building an app, scheduler or connector:
+
+1. Use the skill in at least 10 real project sessions.
+2. Use it for at least 3 subagent dispatches.
+3. Record at least 5 important decisions.
+4. Start at least 2 fresh sessions and test recovery from `.agent-context/`.
+5. Track whether handoff stays short.
+6. Track whether subagent briefs reduce irrelevant repo reading.
+7. Track whether memo remains clean.
 
 Pass criteria:
 
-- Accepted ChangeSet item rate >= 60%.
-- Average manual edit per accepted task <= 30%.
-- User can answer “上次做到哪里了” from ledger within 2 minutes.
-- A fresh Codex session can recover task state from `.agent-ledger/` without relying on prior chat history.
+- Fresh session recovers context in under 2 minutes.
+- User can explain why major decisions were made by reading decision records.
+- Subagent prompts become shorter and more focused.
 - At least 7 of 10 sessions produce useful continuity.
-- `.ics` exports do not create duplicate or wrong-time events in basic usage.
+- Handoff remains readable.
+- No accepted decision lacks rationale.
 
 Fail criteria:
 
-- User stops checking ledger.
-- Plans are mostly ignored.
-- Ledger diverges from real work.
-- `.ics` creates clutter.
-- Direct Codex prompting is faster with similar quality.
+- User stops reading handoff.
+- Decisions are still buried in chat history.
+- Subagents continue scanning the whole repo unnecessarily.
+- SyncSet feels slower than manual explanation.
+- Context files become noisy enough that future agents ignore them.
 
-## 18. Implementation order
+## 17. Implementation order
 
 Implementation should proceed in this order:
 
-1. Create skill scaffold.
+1. Create skill scaffold for `agent-context-sync`.
 2. Write concise `SKILL.md`.
-3. Add reference docs.
-4. Add templates.
-5. Add `export_ics.py`.
-6. Validate skill frontmatter and folder naming.
-7. Run sample ledger creation workflow.
-8. Run sample ChangeSet workflow.
-9. Run sample today plan workflow.
-10. Run sample `.ics` export workflow.
+3. Add `references/context-files.md`.
+4. Add `references/decision-record-schema.md`.
+5. Add `references/syncset-protocol.md`.
+6. Add `references/subagent-briefing.md`.
+7. Add `references/reviewer-checklist.md`.
+8. Add templates under `assets/`.
+9. Generate or update `agents/openai.yaml`.
+10. Validate skill folder.
+11. Dogfood on this repository by creating `.agent-context/`.
+12. Run fresh-session and subagent-brief simulations.
 
-Do not implement external connectors before dogfood passes.
+Do not implement calendar, scheduler, external connector or app UI before dogfood passes.
 
-## 19. Open decisions resolved by this spec
+## 18. Open decisions resolved by this spec
 
-- Ledger format: Markdown source with fenced YAML task cards.
-- Default ledger path: current workspace `.agent-ledger/`.
-- Calendar export: explicit only, never default.
-- `.ics` content: `VEVENT` only, no `VTODO`.
-- Script input: structured JSON, not free-form Markdown parsing.
-- First version scope: manual ledger, plans and optional export only.
-- Cross-session memory: explicit file-backed ledger, not model memory.
+- V1 product type: local Codex skill, not app.
+- V1 workspace contract: `.agent-context/`.
+- V1 memory model: handoff + session log + decision records + subagent briefs.
+- V1 write protocol: SyncSet before writes.
+- V1 quality gate: reviewer checklist.
+- V1 scope: no task ledger, no `.ics`, no scheduler, no external writes.
+- Decision memory is core, not optional.
+- Subagent context sync is core, not optional.
 
-## 20. Remaining open questions
+## 19. Remaining open questions
 
-- Should the skill live in the repository for versioning, or in `$CODEX_HOME/skills` for immediate local discovery?
-- Should `validate_ledger.py` be included in V1 if the Markdown YAML format proves fragile?
-- Should dogfood metrics be stored in `decision-log.md` or a separate `.agent-ledger/metrics.md`?
-- Should there be one ledger per repository, or a global personal ledger that links to repositories?
+- Whether to rename repository/docs from `agent-continuity-ledger` to `agent-context-sync`.
+- Whether SyncSet confirmation can be relaxed for low-risk `session-log.md` append operations after user opt-in.
+- Whether `index.md` is needed after dogfood, or `handoff.md` is enough.
+- Whether decision IDs should be globally monotonic or date-local monotonic.
+- Whether `.agent-context/` should be committed to git by default or ignored per project.
+- Whether future cloud/team versions should treat `.agent-context/` as sync source or export artifact.
