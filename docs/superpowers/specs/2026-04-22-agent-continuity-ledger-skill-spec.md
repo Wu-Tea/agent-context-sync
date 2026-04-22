@@ -31,6 +31,7 @@
 - 使用 Reviewer checklist 作为规则化自检, 不把 Reviewer 包装成绝对安全门。
 - 使用 `.ics` 作为已确认时间块的投影文件, 不作为任务状态源。
 - 使用 `confirmed-timeblocks.json` 作为 `.ics` 脚本输入, 避免脚本解析自由格式 Markdown。
+- 不假设 Codex 自带跨 session 任务记忆。跨 session 连续性必须通过读取 `.agent-ledger/task-ledger.md` 显式恢复。
 
 ## 2. Skill 包结构
 
@@ -160,7 +161,51 @@ Skill 在用户当前项目根目录维护:
 - 如用户明确要求导出到其他路径, 必须先展示目标路径。
 - 不删除 `.agent-ledger/` 以外的文件。
 
-## 5. `task-ledger.md` 规格
+## 5. Cross-session continuity
+
+Codex skill 不能依赖模型自然记住上一个 session 的任务状态。新 session 若没有账本, 只能重新读取 README、docs、git log、git status 等项目材料来推断进度。该推断可能遗漏用户确认过的任务、计划取舍和下一步契约。
+
+`agent-continuity-ledger` 的核心差异化是将这些状态写入 `.agent-ledger/task-ledger.md` 和 `.agent-ledger/decision-log.md`, 让新 session 能从固定文件恢复上下文。
+
+### 5.1 Startup rule
+
+当用户提出以下请求时:
+
+- “上次做到哪里了?”
+- “继续这个项目。”
+- “根据任务账本安排今天。”
+- “帮我看看当前进度。”
+- “用 agent-continuity-ledger 接着做。”
+
+Skill 必须按顺序执行:
+
+1. 检查 `.agent-ledger/task-ledger.md` 是否存在。
+2. 如果存在, 先读取 task ledger 和 decision log。
+3. 再读取 README、spec、git log 或当前工作区状态作为补充上下文。
+4. 输出当前状态摘要、下一步行动、阻塞项和需要确认的问题。
+5. 如果 ledger 与 git/docs 推断冲突, 生成 ChangeSet 或澄清问题, 不直接覆盖 ledger。
+
+### 5.2 Missing ledger rule
+
+如果 `.agent-ledger/task-ledger.md` 不存在:
+
+1. 明确说明没有发现跨 session 任务账本。
+2. 说明当前只能基于仓库文件和 git 状态推断进度。
+3. 提供创建 `.agent-ledger/` 的 ChangeSet。
+4. 等待用户确认后再创建账本。
+
+### 5.3 Continuity acceptance
+
+跨 session 连续性通过以下测试验收:
+
+1. Session A 创建 `.agent-ledger/task-ledger.md`, 写入至少 3 个任务、1 个阻塞项和 1 个下一步行动。
+2. 关闭 Session A。
+3. Session B 在同一 workspace 中启动。
+4. 用户问“上次做到哪里了?”
+5. Skill 必须读取 ledger, 而不是只重新扫描 README/git。
+6. 输出必须包含上次确认任务、当前状态、阻塞项、下一步行动和是否需要更新计划。
+
+## 6. `task-ledger.md` 规格
 
 ### 5.1 文件结构
 
@@ -297,7 +342,7 @@ notes: []
 - `high`: 涉及外部写入、发送消息、删除文件、执行命令、修改代码或敏感信息。
 - `blocked`: 不应由 skill 自动处理。
 
-## 6. `decision-log.md` 规格
+## 7. `decision-log.md` 规格
 
 `decision-log.md` 是按时间追加的决策日志。
 
@@ -332,7 +377,7 @@ notes:
 
 日志只追加, 不重写历史。若记录有误, 追加 correction entry。
 
-## 7. ChangeSet 规格
+## 8. ChangeSet 规格
 
 ### 7.1 ChangeSet ID
 
@@ -446,7 +491,7 @@ Please confirm whether to apply this ChangeSet.
 - 追加 `decision-log.md`。
 - 在回复中说明写入了哪些任务或计划。
 
-## 8. Reviewer 规格
+## 9. Reviewer 规格
 
 Reviewer 是每次 ChangeSet 输出前的自检阶段。
 
@@ -483,7 +528,7 @@ Reviewer 是每次 ChangeSet 输出前的自检阶段。
 - `manual_only`: 可进入账本, 但不能进入计划或 `.ics`。
 - `blocked`: 不写账本, 解释原因。
 
-## 9. 计划生成规格
+## 10. 计划生成规格
 
 ### 9.1 输入
 
@@ -612,7 +657,7 @@ Plan status: draft
 - task-... because ...
 ```
 
-## 10. Calendar export 规格
+## 11. Calendar export 规格
 
 ### 10.1 Export boundary
 
@@ -716,7 +761,7 @@ The skill response after export must say:
 - Use a separate calendar for import if possible.
 - Re-importing may duplicate events depending on calendar client behavior.
 
-## 11. Assets 规格
+## 12. Assets 规格
 
 ### 11.1 `task-ledger-template.md`
 
@@ -759,7 +804,7 @@ Must include:
 - Risks.
 - Excluded.
 
-## 12. `agents/openai.yaml` 规格
+## 13. `agents/openai.yaml` 规格
 
 Recommended UI metadata:
 
@@ -771,7 +816,7 @@ default_prompt: Use this skill to capture tasks from our discussion, propose a r
 
 Actual `openai.yaml` should be generated with the skill creator tooling if available.
 
-## 13. Error handling
+## 14. Error handling
 
 ### 13.1 Missing ledger
 
@@ -806,7 +851,7 @@ If a task implies external write, command execution, deletion, sensitive data, o
 - Mark `risk_level: high` or `blocked`.
 - Ask for explicit confirmation before any future external action.
 
-## 14. Acceptance criteria
+## 15. Acceptance criteria
 
 The skill is acceptable when:
 
@@ -814,6 +859,7 @@ The skill is acceptable when:
 - `SKILL.md` instructs Codex to read/write only `.agent-ledger/` by default.
 - A new ledger can be created from templates after user confirmation.
 - Existing ledger tasks can be read and summarized.
+- In a new session, existing ledger tasks are read before README/git inference when the user asks for current progress.
 - New user input produces a ChangeSet before file edits.
 - ChangeSet includes source quote, confirmation state, next action and acceptance criteria.
 - Reviewer checklist runs before showing ChangeSet.
@@ -826,9 +872,9 @@ The skill is acceptable when:
 - No unconfirmed task is exported to `.ics`.
 - No external write, message send, command execution or deletion is performed by default.
 
-## 15. Test cases
+## 16. Test cases
 
-### 15.1 Ledger creation
+### 16.1 Ledger creation
 
 Input:
 
@@ -842,7 +888,7 @@ Expected:
 - Skill waits for confirmation.
 - After confirmation, creates `task-ledger.md` and `decision-log.md`.
 
-### 15.2 Capture task
+### 16.2 Capture task
 
 Input:
 
@@ -857,7 +903,7 @@ Expected:
 - User confirmation state is `confirmed`.
 - `.ics` boundary appears in acceptance criteria.
 
-### 15.3 AI inferred task
+### 16.3 AI inferred task
 
 Input:
 
@@ -871,7 +917,7 @@ Expected:
 - It does not enter today plan automatically.
 - It does not enter `.ics`.
 
-### 15.4 Today plan
+### 16.4 Today plan
 
 Input:
 
@@ -885,7 +931,7 @@ Expected:
 - Produces at most 3 focus items.
 - Explains unscheduled tasks.
 
-### 15.5 ICS export
+### 16.5 ICS export
 
 Input:
 
@@ -900,7 +946,34 @@ Expected:
 - Exports only that confirmed block.
 - Responds with import/sync caveat.
 
-## 16. Two-week dogfood protocol
+### 16.6 Cross-session recovery
+
+Session A input:
+
+```text
+使用 agent-continuity-ledger, 记录三个任务: 写 skill spec、实现 skill、测试跨 session 恢复。实现 skill 依赖 spec 完成。
+```
+
+Expected Session A:
+
+- Creates or updates `.agent-ledger/task-ledger.md` after confirmation.
+- Records dependency and next action.
+- Appends `decision-log.md`.
+
+Session B input in the same workspace:
+
+```text
+使用 agent-continuity-ledger, 上次做到哪里了?
+```
+
+Expected Session B:
+
+- Reads `.agent-ledger/task-ledger.md` first.
+- Summarizes the three tasks and dependency.
+- Identifies the current next action from ledger.
+- Mentions any mismatch with git/docs only as supplemental context.
+
+## 17. Two-week dogfood protocol
 
 Before building app, scheduler or connectors:
 
@@ -916,6 +989,7 @@ Pass criteria:
 - Accepted ChangeSet item rate >= 60%.
 - Average manual edit per accepted task <= 30%.
 - User can answer “上次做到哪里了” from ledger within 2 minutes.
+- A fresh Codex session can recover task state from `.agent-ledger/` without relying on prior chat history.
 - At least 7 of 10 sessions produce useful continuity.
 - `.ics` exports do not create duplicate or wrong-time events in basic usage.
 
@@ -927,7 +1001,7 @@ Fail criteria:
 - `.ics` creates clutter.
 - Direct Codex prompting is faster with similar quality.
 
-## 17. Implementation order
+## 18. Implementation order
 
 Implementation should proceed in this order:
 
@@ -944,7 +1018,7 @@ Implementation should proceed in this order:
 
 Do not implement external connectors before dogfood passes.
 
-## 18. Open decisions resolved by this spec
+## 19. Open decisions resolved by this spec
 
 - Ledger format: Markdown source with fenced YAML task cards.
 - Default ledger path: current workspace `.agent-ledger/`.
@@ -952,8 +1026,9 @@ Do not implement external connectors before dogfood passes.
 - `.ics` content: `VEVENT` only, no `VTODO`.
 - Script input: structured JSON, not free-form Markdown parsing.
 - First version scope: manual ledger, plans and optional export only.
+- Cross-session memory: explicit file-backed ledger, not model memory.
 
-## 19. Remaining open questions
+## 20. Remaining open questions
 
 - Should the skill live in the repository for versioning, or in `$CODEX_HOME/skills` for immediate local discovery?
 - Should `validate_ledger.py` be included in V1 if the Markdown YAML format proves fragile?
