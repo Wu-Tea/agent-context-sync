@@ -1,6 +1,6 @@
 ---
 name: agent-context-sync
-description: Use when users need AI work continuity across sessions or subagents, including resuming project progress, updating local context, recording decision rationale, preparing subagent briefs, avoiding platform memory pollution, or synchronizing project-local handoff files.
+description: Use when starting, resuming, or continuing work in a workspace that may contain ongoing project context, `.agent-context/`, prior handoff files, or user requests such as "上次做到哪里", "继续这个项目", "更新上下文", "记录决策", "生成 subagent brief", or "同步项目记忆". Use for project continuity across sessions or subagents; do not use for one-shot tasks with no continuity need.
 ---
 
 # Agent Context Sync
@@ -8,6 +8,18 @@ description: Use when users need AI work continuity across sessions or subagents
 ## Overview
 
 Maintain project-local AI continuity in `.agent-context/`: a short handoff, append-only session log, decision records, and scoped subagent briefs. Keep platform memory clean by storing project state in files that future sessions and subagents can read.
+
+## Auto Invocation Cues
+
+Treat these as strong cues to use this skill:
+
+- The workspace contains `.agent-context/` or `.agent-context/handoff.md`.
+- The user asks what happened last time, where work stopped, or how to continue.
+- The user asks to update context, project memory, handoff, session log, or decision records.
+- The user asks to prepare, brief, or integrate subagents.
+- The user asks to avoid polluting platform memory with project-specific state.
+
+Do not insist on this skill for clearly one-shot tasks that have no continuity, handoff, subagent, or project-memory component.
 
 ## Core Rules
 
@@ -29,6 +41,8 @@ When resuming work or answering "where did we leave off", first inspect `.agent-
 3. Read recent relevant entries from `.agent-context/session-log.md`.
 4. Read repository docs, git status, git log, or source files only as supplemental context.
 5. Report current objective, current state, next action, blockers, active questions, stale context, and related decisions.
+
+If `.agent-context/` exists and the task is even moderately related to ongoing project work, continuity, subagents, or prior decisions, prefer loading this skill before doing broad repository rediscovery.
 
 If `.agent-context/` is missing, say so and propose a SyncSet to initialize it. See `references/context-files.md`.
 

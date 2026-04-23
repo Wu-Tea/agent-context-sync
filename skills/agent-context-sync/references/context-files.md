@@ -44,6 +44,14 @@ When asked to resume work:
 4. Read README, specs, git status, git log, or source files only as supplemental context.
 5. If context files conflict with repository state, report the conflict and propose a SyncSet. Do not silently overwrite context.
 
+Treat these as startup-continuity cues:
+
+- `.agent-context/handoff.md` exists.
+- The user says "上次做到哪里", "继续这个项目", "更新上下文", "记录决策", "同步项目记忆", or asks for a subagent brief.
+- The task is clearly part of an ongoing design, implementation, review, or subagent thread.
+
+If the task is clearly one-shot and does not need continuity, handoff, or subagent context, this skill can stay out of the way.
+
 ## `handoff.md`
 
 Purpose: current handoff only.

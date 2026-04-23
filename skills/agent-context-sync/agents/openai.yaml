@@ -1,7 +1,7 @@
 interface:
   display_name: "Agent Context Sync"
-  short_description: "Sync AI handoffs and decisions locally"
-  default_prompt: "Use $agent-context-sync to update local project context, record decisions, prepare subagent briefs, and keep platform memory clean."
+  short_description: "Resume work and sync AI project context"
+  default_prompt: "Use $agent-context-sync to resume this project, read or update .agent-context, record decisions, prepare subagent briefs, and keep platform memory clean."
 
 policy:
   allow_implicit_invocation: true
