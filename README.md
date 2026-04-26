@@ -1,126 +1,110 @@
 # agent-context-sync
 
-本仓库当前不是一个 Trello-like 任务管理应用，而是一个本地优先的 Codex skill 原型项目，核心目标是解决：
+`agent-context-sync` 是一个本地优先的 Codex skill，用来维护项目级 AI 上下文连续性。
 
-- AI 跨 session 的上下文连续性
-- subagent 之间的最小必要上下文同步
-- 关键设计决策的可追溯记录
-- 项目局部记忆与平台长期 memory 的分层
+它解决的不是任务看板、日历或自动执行，而是更基础的一层能力：
 
-当前 V1 方向已经收敛为两层 skill：
+- 让新的 session 快速接手已有项目
+- 让 subagent 拿到最小必要上下文
+- 让关键设计决策可追溯
+- 让项目记忆落在仓库本地，而不是散落在平台 memory 里
 
-- `agent-context-sync`
-  负责真正的项目上下文同步、handoff、session log、decision records、subagent briefs、SyncSet 和 reviewer 流程
-- `using-agent-context-sync`
-  负责在会话开始时判断是否需要先路由到 `agent-context-sync`
+## 这个 skill 做什么
 
-## 当前状态
+当项目进入持续协作状态后，`agent-context-sync` 会把 AI 需要反复读取的关键信息整理到 `.agent-context/` 中，形成一套轻量但可持续的上下文协议。
 
-仓库当前已完成：
+它的核心职责包括：
 
-- `agent-context-sync` skill 的设计、实现与本地安装验证
-- `using-agent-context-sync` bootstrap skill 的实现
-- 仓库级 `AGENTS.md`，用于提高在本项目中的自动触发率
-- `.agent-context/` dogfood 目录，用于记录本项目自身的 handoff、session log 和 decision history
+- 读取和维护项目 handoff
+- 记录 session 推进摘要
+- 记录设计决策及其理由
+- 为 subagent 准备精简 brief
+- 在写入上下文前先展示 `SyncSet`
+- 用 reviewer 规则检查上下文写入是否干净、克制、可追溯
 
-当前还没有做：
+## 适用场景
 
-- 完整任务管理 UI
-- 看板/拖拽交互
-- 日历导出或 `.ics`
-- scheduler / 自动执行
-- 飞书、Notion、Trello、GitHub Issues 等外部 connector
-- 云端/团队版隔离
+适合这些场景：
 
-## 仓库结构
+- “上次做到哪里了？”
+- “继续这个项目。”
+- “把这次讨论整理进项目上下文。”
+- “记录这个设计决策和原因。”
+- “给 subagent 准备一个 brief。”
+
+不适合这些场景：
+
+- 一次性的代码解释
+- 单条报错排查且不需要项目连续性
+- 临时文本处理
+- 任务看板、日历、scheduler、自动执行
+
+## 仓库里的两个 skill
+
+本仓库当前包含两个相关 skill：
+
+### 1. `agent-context-sync`
+
+主 skill，负责真正的上下文协议与写入流程，例如：
+
+- `.agent-context/handoff.md`
+- `.agent-context/session-log.md`
+- `.agent-context/decisions/`
+- `.agent-context/briefs/`
+- `SyncSet`
+- reviewer checklist
+
+### 2. `using-agent-context-sync`
+
+bootstrap skill，用来提高自动触发概率。
+
+它的职责不是直接写上下文，而是在会话开始时判断：
+
+- 当前请求是不是 ongoing project continuity 场景
+- 是否应该先读取 `.agent-context/handoff.md`
+- 是否应该先路由到 `agent-context-sync`
+
+## `.agent-context/` 目录约定
+
+默认的项目本地上下文目录如下：
 
 ```text
-.
-├─ AGENTS.md
-├─ README.md
-├─ docs/
-│  └─ superpowers/
-│     ├─ plans/
-│     └─ specs/
-├─ skills/
-│  ├─ agent-context-sync/
-│  │  ├─ SKILL.md
-│  │  ├─ agents/openai.yaml
-│  │  ├─ assets/
-│  │  └─ references/
-│  └─ using-agent-context-sync/
-│     ├─ SKILL.md
-│     └─ agents/openai.yaml
-└─ .agent-context/
-   ├─ handoff.md
-   ├─ session-log.md
-   └─ decisions/
+.agent-context/
+├─ handoff.md
+├─ session-log.md
+├─ decisions/
+└─ briefs/
 ```
 
-## 核心概念
-
-### 1. `.agent-context/`
-
-项目局部上下文目录，而不是长期个人 memory。当前约定包括：
+各文件职责：
 
 - `handoff.md`
   当前目标、当前状态、下一步、阻塞、活跃问题
 - `session-log.md`
-  重要 session 和 subagent 结果的追加记录
+  重要推进记录，按时间追加
 - `decisions/`
-  ADR-like 设计决策记录
+  关键决策、原因、备选方案和影响
 - `briefs/`
-  给 subagent 的最小必要上下文包
+  发给 subagent 的最小必要上下文包
 
-### 2. `SyncSet`
+## 工作方式
 
-在写入 `.agent-context/` 前先展示 proposed write set，避免 AI 直接污染上下文。
+`agent-context-sync` 的推荐流程是：
 
-### 3. `reviewer`
+1. 先读 `.agent-context/handoff.md`
+2. 再读相关 decision 和最近 session 记录
+3. 只在需要时补读 README、docs、git log 或源码
+4. 如果要写入上下文，先给出 `SyncSet`
+5. 经过 reviewer 检查后，再由用户确认写入
 
-在展示或应用 SyncSet 前做规则化自检，重点检查：
+这能减少两类常见问题：
 
-- AI 推断是否被误写成用户确认事实
-- handoff 是否过长
-- decision 是否缺少 rejected alternatives
-- 是否泄露 secrets / credentials
-- 是否又滑回 task manager / calendar / scheduler 范围
+- 每个新 session 都重新扫描仓库，成本高且容易漏上下文
+- AI 把未经确认的推断直接写成“项目事实”
 
-### 4. bootstrap routing
+## 快速安装
 
-`using-agent-context-sync` 的职责不是写项目上下文，而是像一个“启动路由器”那样判断：
-
-- 当前会话是不是 ongoing project continuity 场景
-- 是否应该先读 `.agent-context/handoff.md`
-- 是否应该先切换到 `agent-context-sync`
-
-## 快速开始
-
-### 方案 A：只在当前仓库里使用
-
-1. 打开本仓库。
-2. 确保仓库根目录存在 `AGENTS.md`。
-3. 新开 Codex 会话。
-4. 直接用自然语言提问，例如：
-
-```text
-上次做到哪里了？
-继续这个项目。
-更新一下上下文。
-帮我记录这个决策。
-给 subagent 准备 brief。
-```
-
-预期行为：
-
-- 会优先命中 `using-agent-context-sync`
-- 它会判断当前是不是 continuity 场景
-- 然后路由到 `agent-context-sync`
-- 如果有 `.agent-context/handoff.md`，会先读它，再补 README / docs / git / source
-
-### 方案 B：安装到本机 Codex runtime
-
-把这两个 skill 目录复制到本机 skill 目录，例如：
+把这两个目录复制到本机 Codex skill 目录：
 
 ```text
 C:\Users\Administrator\.codex\skills\codex-primary-runtime\agent-context-sync
@@ -133,7 +117,7 @@ C:\Users\Administrator\.codex\skills\codex-primary-runtime\using-agent-context-s
 C:\Users\Administrator\.codex\AGENTS.md
 ```
 
-示例规则：
+可参考的规则：
 
 ```markdown
 - 当任务涉及继续已有项目、读取上次进展、更新项目上下文、记录设计决策、准备或整合 subagent 时，优先使用 Agent Context Sync。
@@ -141,59 +125,54 @@ C:\Users\Administrator\.codex\AGENTS.md
 - 完成较大设计、实现、review 或 subagent 工作后，提议更新 .agent-context/。
 ```
 
-安装后建议重启 Codex 或新开会话。
+安装后建议新开 Codex 会话再测试。
 
 ## 使用示例
 
-### 读取项目当前状态
+### 接手项目
 
 ```text
 这个项目你接手一下，具体进度自己读取。
 ```
 
-### 继续已有项目
+### 继续推进
 
 ```text
 上次做到哪里了？
 继续这个项目。
 ```
 
-### 记录设计决策
+### 记录决策
 
 ```text
-把这个设计决定记录一下，并说明为什么这么选。
+把这个设计决策整理一下，记录原因和备选方案。
 ```
 
-### subagent briefing
+### 准备 subagent brief
 
 ```text
-给一个强烈反对方 subagent 准备 brief。
+给一个负责 review 的 subagent 准备 brief。
 ```
 
-### 更新上下文
+### 更新项目上下文
 
 ```text
-把今天这段推进整理进项目上下文。
+把今天这段推进写进项目上下文。
 ```
 
-## 自动触发是怎么做的
+## 自动触发依赖什么
 
-当前自动触发主要依赖 3 层：
+当前自动触发主要依赖三层：
 
 1. `using-agent-context-sync` 的 `description`
-   覆盖 “starting / resuming / continuing work” 和一组中文触发词
 2. `agent-context-sync` 的 `description`
-   覆盖 `.agent-context/`、handoff、decision、subagent、project memory 等 continuity cues
-3. 仓库级/全局 `AGENTS.md`
-   告诉 Codex 在哪些场景下优先走 continuity 流程
+3. 仓库级或全局 `AGENTS.md`
 
-它不是 100% 强制触发，而是尽量把触发概率拉高，同时避免误伤明显的一次性任务。
+它的目标不是强制在所有任务里出现，而是在明显需要 continuity 的场景下，更早、更稳定地被调用。
 
 ## 验证方法
 
-### 验证 skill 结构
-
-Windows 下建议显式启用 UTF-8 再跑校验脚本：
+Windows 下建议启用 UTF-8 再跑校验：
 
 ```powershell
 $env:PYTHONUTF8='1'
@@ -207,51 +186,29 @@ python C:\Users\Administrator\.codex\skills\.system\skill-creator\scripts\quick_
 Skill is valid!
 ```
 
-### 验证自动触发
-
-新开一个 Codex 会话，不显式写 `$agent-context-sync`，直接输入：
+然后新开一个 Codex 会话，直接输入：
 
 ```text
 上次做到哪里了？
 ```
 
-或：
+如果自动触发正常，通常会先命中 `using-agent-context-sync`，再路由到 `agent-context-sync`，并优先读取 `.agent-context/handoff.md`。
 
-```text
-这个项目你接手一下，具体进度自己读取。
-```
+## 非目标
 
-如果自动触发成功，通常会出现：
+当前版本明确不做：
 
-- 先走 `using-agent-context-sync`
-- 再路由到 `agent-context-sync`
-- 先读 `.agent-context/handoff.md`
-- 再补 session log、decisions、docs、git 或源码
-
-## 重要文档
-
-- 需求说明  
-  `docs/superpowers/specs/2026-04-22-agent-continuity-ledger-skill-requirements.md`
-- 技术规格  
-  `docs/superpowers/specs/2026-04-22-agent-continuity-ledger-skill-spec.md`
-- 实现计划  
-  `docs/superpowers/plans/2026-04-22-agent-context-sync-skill.md`
-
-## V1 非目标
-
-以下内容明确不属于当前 V1：
-
-- 完整任务系统
 - Trello-like 看板
-- 日程规划器
+- 日程系统
 - `.ics` 导出
 - scheduler / automation runner
 - 外部 SaaS 写入
-- 团队协作权限系统
-- 云端服务化
+- 云端团队协作隔离
 
-## 开发备注
+## 相关文件
 
-- 当前仓库里的 `.agent-context/` 主要用于 dogfood 本项目自身的 continuity 流程。
-- 是否将 `.agent-context/` 提交进 git，是一个项目策略问题，不是 skill 的硬要求。
-- 如果未来要商业化或给别人安装，下一步更可能是做成更标准的 plugin / repo-local `.agents/skills/` 分发结构，而不是一直靠手工复制目录。
+- [AGENTS.md](E:/AI/Trello_AI/AGENTS.md)
+- [agent-context-sync SKILL.md](E:/AI/Trello_AI/skills/agent-context-sync/SKILL.md)
+- [using-agent-context-sync SKILL.md](E:/AI/Trello_AI/skills/using-agent-context-sync/SKILL.md)
+- [requirements](E:/AI/Trello_AI/docs/superpowers/specs/2026-04-22-agent-continuity-ledger-skill-requirements.md)
+- [spec](E:/AI/Trello_AI/docs/superpowers/specs/2026-04-22-agent-continuity-ledger-skill-spec.md)
