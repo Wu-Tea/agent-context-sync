@@ -1,0 +1,7 @@
+interface:
+  display_name: "Using Agent Context Sync"
+  short_description: "Route continuity work through context sync"
+  default_prompt: "Use $using-agent-context-sync to decide whether this conversation should first route through $agent-context-sync before broad repository exploration."
+
+policy:
+  allow_implicit_invocation: true
