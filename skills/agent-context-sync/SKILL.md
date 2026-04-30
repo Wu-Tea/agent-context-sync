@@ -7,7 +7,7 @@ description: Use when starting, resuming, or continuing work in a workspace that
 
 ## Overview
 
-Maintain project-local AI continuity in `.agent-context/`: a short handoff, append-only session log, decision records, and scoped subagent briefs. Keep platform memory clean by storing project state in files that future sessions and subagents can read.
+Maintain project-local AI continuity in `.agent-context/`: a short handoff, a primary session log that can be compacted into index plus archive, decision records, and scoped subagent briefs. Keep platform memory clean by storing project state in files that future sessions and subagents can read.
 
 ## Auto Invocation Cues
 
@@ -29,8 +29,10 @@ Do not insist on this skill for clearly one-shot tasks that have no continuity, 
 4. Do not write until the user clearly confirms, unless the current user request already explicitly authorizes writing the described context files.
 5. Mark AI-inferred information as inferred. Do not record it as user-confirmed or accepted.
 6. Keep `handoff.md` short and current. Move history to `session-log.md` and rationale to `decisions/`.
-7. Do not create task ledgers, calendars, `.ics` files, schedulers, reminders, external issues, Trello cards, Feishu tasks, or external writes in V1.
-8. Never store secrets, tokens, cookies, private keys, credentials, or unnecessary personal data.
+7. Keep `session-log.md` as the primary session-history entry point. If it grows too large, propose compaction into milestone summaries plus `.agent-context/archive/` instead of replacing it with a new primary file.
+8. When `handoff.md` or `session-log.md` exceed soft size limits, propose a compaction SyncSet before writing more bulk history.
+9. Do not create task ledgers, calendars, `.ics` files, schedulers, reminders, external issues, Trello cards, Feishu tasks, or external writes in V1.
+10. Never store secrets, tokens, cookies, private keys, credentials, or unnecessary personal data.
 
 ## Startup Workflow
 
@@ -39,12 +41,15 @@ When resuming work or answering "where did we leave off", first inspect `.agent-
 1. Read `.agent-context/handoff.md` if present.
 2. Read decision files referenced by the handoff.
 3. Read recent relevant entries from `.agent-context/session-log.md`.
-4. Read repository docs, git status, git log, or source files only as supplemental context.
-5. Report current objective, current state, next action, blockers, active questions, stale context, and related decisions.
+4. If the session log points to archived detail, read the linked archive only when deeper history is needed.
+5. Read repository docs, git status, git log, or source files only as supplemental context.
+6. Report current objective, current state, next action, blockers, active questions, stale context, and related decisions.
 
 If `.agent-context/` exists and the task is even moderately related to ongoing project work, continuity, subagents, or prior decisions, prefer loading this skill before doing broad repository rediscovery.
 
 If `.agent-context/` is missing, say so and propose a SyncSet to initialize it. See `references/context-files.md`.
+
+If `handoff.md` or `session-log.md` are oversized, report the current state first, then propose compaction rather than silently rewriting history.
 
 ## SyncSet Before Writes
 
@@ -82,7 +87,7 @@ See `references/reviewer-checklist.md`.
 
 ## References
 
-- Use `references/context-files.md` when creating, reading, repairing, or condensing `.agent-context/`.
+- Use `references/context-files.md` when creating, reading, repairing, condensing, or compacting `.agent-context/`.
 - Use `references/decision-record-schema.md` when recording, updating, superseding, or reviewing decisions.
 - Use `references/syncset-protocol.md` before editing any context file.
 - Use `references/subagent-briefing.md` before dispatching or integrating subagents.

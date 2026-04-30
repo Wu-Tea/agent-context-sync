@@ -10,11 +10,15 @@ Default layout:
 .agent-context/
   handoff.md
   session-log.md
+  archive/
+    session-log-YYYY-MM-DD-to-YYYY-MM-DD-pre-compaction.md
   decisions/
     DEC-YYYY-MM-DD-NNN-short-title.md
   briefs/
     subagent-YYYY-MM-DD-NNN-topic.md
 ```
+
+`archive/` is optional. Older or smaller projects can remain valid without it.
 
 Do not create task ledger, plan, calendar, `.ics`, scheduler, or connector files in V1.
 
@@ -41,8 +45,9 @@ When asked to resume work:
 1. Read `.agent-context/handoff.md`.
 2. Read decisions listed in the handoff.
 3. Read recent relevant entries from `.agent-context/session-log.md`.
-4. Read README, specs, git status, git log, or source files only as supplemental context.
-5. If context files conflict with repository state, report the conflict and propose a SyncSet. Do not silently overwrite context.
+4. If `session-log.md` links to archived detail, read the linked archive only when deeper history is needed.
+5. Read README, specs, git status, git log, or source files only as supplemental context.
+6. If context files conflict with repository state, report the conflict and propose a SyncSet. Do not silently overwrite context.
 
 Treat these as startup-continuity cues:
 
@@ -76,10 +81,14 @@ Rules:
 - Link to decision records instead of copying full rationale.
 - Move historical details to `session-log.md`.
 - Move durable rationale to `decisions/`.
+- Self-check line count before writing:
+  - soft suggestion threshold: over 80 lines
+  - strong suggestion threshold: over 120 lines
+- Completed work that no longer affects the next resume should be condensed out of the handoff and moved to milestone summaries, decision links, or archive-backed history.
 
 ## `session-log.md`
 
-Purpose: append important session outcomes.
+Purpose: remain the primary session-history entry point while preserving important outcomes and links to deeper history.
 
 Each entry should include:
 
@@ -94,10 +103,31 @@ Each entry should include:
 
 Rules:
 
-- Append new entries in chronological order.
+- Append new entries in chronological order until compaction is needed.
 - Summarize; do not transcribe full chat.
 - Use correction entries instead of silently rewriting history.
 - Do not store secrets or unnecessary personal data.
+- `session-log.md` stays the main file name even after compaction; do not replace it with a new primary file such as `session-index.md`.
+- When detailed history becomes too large, `session-log.md` may be rewritten into:
+  - an archive note
+  - milestone summaries
+  - recent active checkpoints
+- If archive-backed history exists, keep links from `session-log.md` to the archived files.
+- Self-check line count before writing:
+  - soft suggestion threshold: over 100 lines
+  - strong suggestion threshold: over 160 lines
+
+## `archive/`
+
+Purpose: optional detail layer for older session history after compaction.
+
+Rules:
+
+- Archive files are created only when compaction is proposed and confirmed.
+- Preserve chronological traceability in archive file names, for example:
+  - `session-log-2026-04-26-to-2026-04-28-pre-compaction.md`
+- Do not make `archive/` a required startup read target.
+- Keep `session-log.md` readable on its own; archive is for deeper recovery, not routine startup.
 
 ## Repair Rules
 
@@ -114,3 +144,11 @@ If `handoff.md` becomes too long:
 2. Move history to `session-log.md`.
 3. Move rationale to `decisions/`.
 4. Keep current objective, state, next action, blockers, questions, and read list.
+
+If `session-log.md` becomes too long:
+
+1. Propose compaction instead of silently rewriting it.
+2. Preserve `session-log.md` as the primary startup entry point.
+3. Optionally create an archive file under `.agent-context/archive/`.
+4. Rewrite the main file into archive note plus milestone summaries plus recent active checkpoints.
+5. Preserve links to archived ranges so deeper history is still recoverable.

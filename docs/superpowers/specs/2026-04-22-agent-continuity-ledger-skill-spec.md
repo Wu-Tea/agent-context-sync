@@ -28,7 +28,7 @@
 - 使用 Markdown 作为 V1 存储格式，优先保证人类可读、git diff 友好、AI 易编辑。
 - 使用 `.agent-context/` 而不是 `.agent-ledger/`，避免产品语义滑向任务账本。
 - `handoff.md` 只保存当前交接状态，不保存完整历史。
-- `session-log.md` 用追加日志保存重要进展和 subagent 结果。
+- `session-log.md` 保持为主日志入口；默认可追加，必要时压缩为里程碑索引并把详细历史下沉到 archive。
 - `decisions/*.md` 用 ADR-like 文件保存重要决策、原因、备选方案和影响。
 - `briefs/*.md` 用最小上下文包支持 subagent，不追求继承完整 memory。
 - 使用 `SyncSet` 作为所有写入前的用户确认层。
@@ -142,6 +142,8 @@ Skill 在用户当前项目根目录维护:
 .agent-context/
   handoff.md
   session-log.md
+  archive/
+    session-log-YYYY-MM-DD-to-YYYY-MM-DD-pre-compaction.md
   decisions/
     DEC-YYYY-MM-DD-NNN-short-title.md
   briefs/
@@ -180,9 +182,10 @@ Skill 在用户当前项目根目录维护:
 2. 如果存在，先读取 `handoff.md`。
 3. 根据 handoff 中的相关 decision 链接读取 `decisions/*.md`。
 4. 读取 `session-log.md` 中最近的相关条目。
-5. 再按任务需要读取 README、spec、git status、git log 或源码。
-6. 输出当前目标、当前状态、下一步、阻塞、活跃问题和可能过期的上下文。
-7. 如果 `.agent-context/` 与 repo 状态冲突，生成 SyncSet 或澄清问题，不直接覆盖。
+5. 如果 `session-log.md` 链接到 archive，仅在需要更深历史时再读取相关 archive 文件。
+6. 再按任务需要读取 README、spec、git status、git log 或源码。
+7. 输出当前目标、当前状态、下一步、阻塞、活跃问题和可能过期的上下文。
+8. 如果 `.agent-context/` 与 repo 状态冲突，生成 SyncSet 或澄清问题，不直接覆盖。
 
 缺失上下文规则:
 
@@ -248,6 +251,10 @@ Rules:
 - Do not store secrets.
 - Do not store long chat transcripts.
 - Do not list every task unless directly needed for handoff.
+- Run a size self-check before writing:
+  - suggest compaction above 80 lines
+  - strongly suggest compaction above 120 lines
+- Completed work that no longer affects the next resume should move to milestone summaries, decisions, or archive-backed history.
 
 ## 7. `session-log.md` 规格
 
@@ -283,11 +290,20 @@ Follow-up:
 
 Rules:
 
-- Append entries chronologically.
+- Append entries chronologically until compaction is needed.
 - Summarize only important changes.
 - Record subagent outcomes after integration.
 - Use correction entries rather than silently rewriting history when meaning changes.
 - Avoid storing raw sensitive text.
+- Keep `session-log.md` as the primary read target even after compaction.
+- When the main log grows too large, rewrite it into:
+  - archive note
+  - milestone summaries
+  - recent active checkpoints
+- Archive-backed detail may live under `.agent-context/archive/`.
+- Run a size self-check before writing:
+  - suggest compaction above 100 lines
+  - strongly suggest compaction above 160 lines
 
 ## 8. Decision record 规格
 
@@ -433,6 +449,7 @@ Template:
 
 - Handoff updates: 1
 - Session log entries: 1
+- Compaction actions: 0
 - Decision records: 1 new, 0 updated
 - Subagent briefs: 0
 - Items needing confirmation: 1
@@ -446,6 +463,10 @@ Template:
 ### Proposed Session Log Entries
 
 - Add entry for 2026-04-22T18:00:00+08:00 summarizing ...
+
+### Proposed Compaction Actions
+
+- None
 
 ### Proposed Decision Records
 
@@ -488,6 +509,9 @@ Allowed actions:
 - `create_context_dir`
 - `update_handoff`
 - `append_session_log`
+- `condense_handoff`
+- `compact_session_log`
+- `create_archive_file`
 - `create_decision`
 - `update_decision_status`
 - `create_subagent_brief`
@@ -522,6 +546,8 @@ Checklist:
 - Is any user confirmation being overstated?
 - Is the handoff short enough to be useful?
 - Is the handoff focused on current state rather than full history?
+- Is `session-log.md` still readable as the primary startup file?
+- If archive is present, does the main log still point to the archived range clearly?
 - Are rejected alternatives recorded for major decisions?
 - Are superseded decisions linked instead of overwritten?
 - Does the subagent brief have a narrow mission?
@@ -602,7 +628,17 @@ Expected behavior:
 3. Move historical summary to session log.
 4. Keep only current objective, state and next action in handoff.
 
-### 13.5 High-risk or external action
+### 13.5 Oversized session log
+
+Expected behavior:
+
+1. Propose compaction instead of silently rewriting history.
+2. Keep `session-log.md` as the primary startup file.
+3. Optionally create `.agent-context/archive/session-log-YYYY-MM-DD-to-YYYY-MM-DD-pre-compaction.md`.
+4. Rewrite the main log into archive note, milestone summaries, and recent active checkpoints.
+5. Preserve links so deeper history is still recoverable.
+
+### 13.6 High-risk or external action
 
 Expected behavior:
 
@@ -619,6 +655,7 @@ The skill is acceptable when:
 - A new session reads `handoff.md` before relying on README/git inference.
 - Relevant decisions are loaded when resuming a project.
 - Session summaries are appended to `session-log.md`.
+- If session-log compaction occurs, `session-log.md` remains readable and links to archive-backed detail.
 - Important decisions are stored as individual files in `decisions/`.
 - Decision records include reasons, rejected alternatives, evidence and review triggers.
 - Subagent briefs include mission, role, required context, files to read, constraints and expected output.
@@ -730,6 +767,21 @@ Expected:
 - Writes to `.agent-context/decisions/` or `handoff.md`, not platform memo.
 - Explains that memo is reserved for durable cross-project preferences.
 
+### 15.8 Suggest compaction when context grows large
+
+Input:
+
+```text
+现在能给 context 压缩一下吗？
+```
+
+Expected:
+
+- Skill checks `handoff.md` and `session-log.md` size before proposing writes.
+- Skill proposes compaction through SyncSet rather than silently overwriting history.
+- `session-log.md` remains the main startup file after compaction.
+- If archive is created, the archive range is named and linked clearly.
+
 ## 16. Dogfood protocol
 
 Before building an app, scheduler or connector:
@@ -741,6 +793,7 @@ Before building an app, scheduler or connector:
 5. Track whether handoff stays short.
 6. Track whether subagent briefs reduce irrelevant repo reading.
 7. Track whether memo remains clean.
+8. Track whether compaction keeps startup cost low without losing recoverability.
 
 Pass criteria:
 
@@ -749,6 +802,7 @@ Pass criteria:
 - Subagent prompts become shorter and more focused.
 - At least 7 of 10 sessions produce useful continuity.
 - Handoff remains readable.
+- Session-log compaction remains recoverable and does not break startup.
 - No accepted decision lacks rationale.
 
 Fail criteria:
@@ -793,7 +847,7 @@ Do not implement calendar, scheduler, external connector or app UI before dogfoo
 
 - Whether to rename repository/docs from `agent-continuity-ledger` to `agent-context-sync`.
 - Whether SyncSet confirmation can be relaxed for low-risk `session-log.md` append operations after user opt-in.
-- Whether `index.md` is needed after dogfood, or `handoff.md` is enough.
+- Whether handoff/session-log compaction thresholds should be configurable per project.
 - Whether decision IDs should be globally monotonic or date-local monotonic.
 - Whether `.agent-context/` should be committed to git by default or ignored per project.
 - Whether future cloud/team versions should treat `.agent-context/` as sync source or export artifact.

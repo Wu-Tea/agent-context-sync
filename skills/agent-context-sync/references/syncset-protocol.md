@@ -13,6 +13,7 @@ Each SyncSet should include:
 - summary counts
 - proposed handoff updates
 - proposed session-log entries
+- proposed compaction actions
 - proposed decision records
 - proposed subagent briefs
 - AI-inferred items
@@ -38,6 +39,9 @@ Default numbering is date-local monotonic within the current session. If no prio
 - `create_context_dir`
 - `update_handoff`
 - `append_session_log`
+- `condense_handoff`
+- `compact_session_log`
+- `create_archive_file`
 - `create_decision`
 - `update_decision_status`
 - `create_subagent_brief`
@@ -85,10 +89,12 @@ Before applying:
 2. Ensure all inferred items are marked.
 3. Ensure sensitive items are excluded.
 4. Ensure writes are inside `.agent-context/` unless explicitly approved.
+5. If compaction is proposed, ensure history remains traceable and no archive-backed detail is silently discarded.
 
 After applying:
 
 1. Summarize files changed.
 2. Mention decisions created or updated.
-3. Mention remaining open questions.
-4. Do not claim broader completion than was verified.
+3. Mention any archive file created and what date range or history slice it preserves.
+4. Mention remaining open questions.
+5. Do not claim broader completion than was verified.

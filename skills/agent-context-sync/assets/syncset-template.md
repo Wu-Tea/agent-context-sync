@@ -4,6 +4,7 @@
 
 - Handoff updates: 0
 - Session log entries: 0
+- Compaction actions: 0
 - Decision records: 0 new, 0 updated
 - Subagent briefs: 0
 - Items needing confirmation: 0
@@ -14,6 +15,10 @@
 - None
 
 ### Proposed Session Log Entries
+
+- None
+
+### Proposed Compaction Actions
 
 - None
 
